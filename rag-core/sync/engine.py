@@ -107,6 +107,10 @@ class SyncEngine:
         self._lib_cache_at = 0.0
         self._cache_lock = threading.RLock()
 
+        # cache: library_name -> {doc_name: file_size}（防止重复上传）
+        self._doc_cache: dict[str, dict[str, int]] = {}
+        self._doc_lock = threading.Lock()
+
         # in-memory tail（worker 写, SSE/HTTP 读）
         self.recent_events: list[dict] = []
         self._events_lock = threading.Lock()
@@ -352,7 +356,30 @@ class SyncEngine:
         with self._cache_lock:
             self._lib_cache = {d["name"]: d["id"] for d in datasets if d.get("id")}
             self._lib_cache_at = time.time()
-            return dict(self._lib_cache)
+            lib_cache_snapshot = dict(self._lib_cache)
+        # 异步刷新文档列表缓存（用于去重）
+        self._refresh_doc_cache()
+        return lib_cache_snapshot
+
+    def _refresh_doc_cache(self):
+        """拉取各知识库的文档列表，缓存 {库名: {文档名: 文件大小}} 用于去重。"""
+        with self._cache_lock:
+            libs = dict(self._lib_cache)
+        for lib_name, ds_id in libs.items():
+            try:
+                docs = self.ragflow.list_documents(ds_id, page=1, page_size=200)
+            except Exception:
+                continue
+            local: dict[str, int] = {}
+            for d in docs:
+                name = d.get("name", "")
+                size = d.get("size", 0)
+                if name and size:
+                    local[name] = size
+                elif name:
+                    local[name] = 0
+            with self._doc_lock:
+                self._doc_cache[lib_name] = local
 
     def _ensure_dataset(self, name: str) -> Optional[str]:
         cache = self._refresh_lib_cache()
@@ -435,6 +462,16 @@ class SyncEngine:
         existing = st.get_record(str(p))
         if existing and existing.sha256 == sha and existing.status == "done":
             return  # 已处理过
+
+        # ---- 服务端去重: 同名同大小 → 跳过上传 ----
+        with self._doc_lock:
+            doc_sizes = self._doc_cache.get(lib, {})
+        cached_size = doc_sizes.get(p.name)
+        if cached_size is not None and cached_size == size:
+            st.upsert(str(p), sha256=sha, library=lib, size=size, status="done")
+            self._record_event("dedup_skipped", lib, p.name)
+            return
+        # ---- end 去重 ----
 
         meta = self._metadata_for(p, lib, sha)
 
