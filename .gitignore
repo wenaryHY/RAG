@@ -1,0 +1,34 @@
+# Aider
+.aider*
+
+# Upstream RAGFlow source tree (has its own .git)
+RAGFlow/
+
+# User data
+RAGfiles/
+
+# Generated outputs
+RAG-Audit/reports/
+RAG-Audit/debug_last_response.txt
+RAG-Scheduler/logs/
+logs/
+reports/
+state.sqlite
+state.sqlite-*
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.pytest_cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Windows
+Thumbs.db
+desktop.ini
