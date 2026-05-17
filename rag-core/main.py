@@ -24,6 +24,7 @@ from scheduler.router import router as scheduler_router
 from audit.router import router as audit_router
 from sync.router import router as sync_router
 from sync.engine import SyncEngine
+from panel.router import router as panel_router
 
 logger = logging.getLogger("rag-core")
 logging.basicConfig(
@@ -71,6 +72,16 @@ app = FastAPI(title="rag-core", version="0.1.0", lifespan=lifespan)
 app.include_router(scheduler_router)
 app.include_router(audit_router)
 app.include_router(sync_router)
+app.include_router(panel_router)
+
+# 静态文件挂载（panel 前端单文件 HTML）
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import RedirectResponse, FileResponse
+from pathlib import Path as _Path
+
+_static_dir = _Path(__file__).parent / "panel" / "static"
+if _static_dir.exists():
+    app.mount("/ui", StaticFiles(directory=str(_static_dir), html=True), name="ui")
 
 
 @app.get("/health")
@@ -94,6 +105,9 @@ def health():
 
 @app.get("/")
 def root():
+    # 优先重定向到 UI；UI 不存在则返回服务信息
+    if _static_dir.exists() and (_static_dir / "index.html").exists():
+        return RedirectResponse(url="/ui/")
     return {"service": "rag-core", "docs": "/docs", "health": "/health"}
 
 

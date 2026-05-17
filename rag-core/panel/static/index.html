@@ -1,0 +1,441 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RAG Panel</title>
+<script src="/ui/vendor/tailwind.min.js"></script>
+<script defer src="/ui/vendor/alpine.min.js"></script>
+<style>
+  [x-cloak]{display:none!important}
+  body{font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
+  .dot{display:inline-block;width:.6rem;height:.6rem;border-radius:9999px;margin-right:.4rem}
+  .dot-green{background:#22c55e}.dot-yellow{background:#eab308}.dot-red{background:#ef4444}.dot-gray{background:#94a3b8}
+  pre{white-space:pre-wrap;word-break:break-all}
+  .scroll-y{max-height:60vh;overflow-y:auto}
+  .tab-active{background:#0f172a;color:#fff}
+  .ev-uploaded{color:#16a34a}.ev-error,.ev-upload_failed{color:#dc2626}
+  .ev-library_created,.ev-local_dir_created{color:#2563eb}
+</style>
+</head>
+<body class="bg-slate-50 text-slate-800" x-data="app()" x-init="init()" x-cloak>
+
+<header class="bg-slate-900 text-white">
+  <div class="max-w-7xl mx-auto px-6 py-3 flex items-center gap-6">
+    <div class="text-lg font-semibold tracking-wide">RAG Panel</div>
+    <nav class="flex gap-1 text-sm">
+      <template x-for="t in tabs" :key="t.id">
+        <button @click="tab=t.id" class="px-3 py-1.5 rounded"
+          :class="tab===t.id?'tab-active':'hover:bg-slate-800'"
+          x-text="t.label"></button>
+      </template>
+    </nav>
+    <div class="ml-auto flex items-center text-xs text-slate-300">
+      <span class="dot" :class="overallDot()"></span>
+      <span x-text="health.overall||'?'"></span>
+      <button @click="refreshAll()" class="ml-3 px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded">刷新</button>
+    </div>
+  </div>
+</header>
+
+<main class="max-w-7xl mx-auto px-6 py-6">
+
+<!-- DASHBOARD -->
+<section x-show="tab==='dashboard'" class="space-y-6">
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+    <template x-for="(v,k) in (health.checks||{})" :key="k">
+      <div class="bg-white rounded-lg p-4 shadow-sm">
+        <div class="text-xs text-slate-500 uppercase" x-text="k"></div>
+        <div class="mt-2 flex items-center">
+          <span class="dot" :class="v==='ok'?'dot-green':'dot-red'"></span>
+          <span class="font-medium" x-text="v"></span>
+        </div>
+      </div>
+    </template>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+    <div class="bg-white rounded-lg p-4 shadow-sm">
+      <div class="flex items-center justify-between mb-2">
+        <h3 class="font-semibold">RAGFlow 知识库</h3>
+        <a href="http://127.0.0.1/" target="_blank" class="text-xs text-blue-600 hover:underline">打开 RAGFlow Web</a>
+      </div>
+      <table class="w-full text-sm">
+        <thead class="text-slate-500 text-xs uppercase">
+          <tr><th class="text-left py-1">名称</th><th class="text-right">文档</th><th class="text-right">分块</th></tr>
+        </thead>
+        <tbody>
+          <template x-for="lib in (stats.ragflow_libraries||[])" :key="lib.id">
+            <tr class="border-t">
+              <td class="py-1.5" x-text="lib.name"></td>
+              <td class="text-right" x-text="lib.document_count"></td>
+              <td class="text-right" x-text="lib.chunk_count"></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="bg-white rounded-lg p-4 shadow-sm">
+      <div class="flex items-center justify-between mb-2">
+        <h3 class="font-semibold">本地文件状态</h3>
+        <div class="text-xs text-slate-500">
+          总 <span x-text="stats.files?.total||0"></span> · 完成
+          <span class="text-green-600" x-text="stats.files?.done||0"></span> · 失败
+          <span class="text-red-600" x-text="stats.files?.error||0"></span>
+        </div>
+      </div>
+      <table class="w-full text-sm">
+        <thead class="text-slate-500 text-xs uppercase">
+          <tr><th class="text-left py-1">库</th><th class="text-right">文件数</th></tr>
+        </thead>
+        <tbody>
+          <template x-for="lc in (stats.files?.by_library||[])" :key="lc.library">
+            <tr class="border-t">
+              <td class="py-1.5" x-text="lc.library"></td>
+              <td class="text-right" x-text="lc.count"></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="bg-white rounded-lg p-4 shadow-sm">
+    <div class="flex items-center justify-between mb-2">
+      <h3 class="font-semibold">快捷动作</h3>
+    </div>
+    <div class="flex gap-2 flex-wrap">
+      <button @click="triggerReconcile()" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm">立即同步</button>
+      <button @click="tab='audit'" class="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 rounded text-sm">审计中心</button>
+      <button @click="tab='datasets'" class="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 rounded text-sm">检索测试</button>
+      <a href="/docs" target="_blank" class="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 rounded text-sm">API Docs</a>
+    </div>
+    <div class="mt-3 text-xs text-slate-500" x-show="actionMsg" x-text="actionMsg"></div>
+  </div>
+</section>
+
+<!-- SYNC -->
+<section x-show="tab==='sync'" class="space-y-4">
+  <div class="bg-white rounded-lg p-4 shadow-sm"
+       @dragover.prevent="dragOver=true" @dragleave="dragOver=false" @drop.prevent="onDrop($event)">
+    <div class="flex items-center justify-between mb-2">
+      <h3 class="font-semibold">拖拽上传</h3>
+      <div class="text-xs text-slate-500">
+        watcher: <span class="dot" :class="syncStatus.observer_alive?'dot-green':'dot-red'"></span>
+        <span x-text="syncStatus.observer_alive?'running':'down'"></span>
+        · 队列 <span x-text="syncStatus.queue_size||0"></span>
+        · 待处理 <span x-text="syncStatus.pending||0"></span>
+      </div>
+    </div>
+    <div class="border-2 border-dashed rounded-lg p-6 text-center text-sm"
+         :class="dragOver?'border-blue-500 bg-blue-50':'border-slate-300'">
+      <div class="mb-2">把 PDF / Word / TXT 拖到这里</div>
+      <div class="flex items-center justify-center gap-2 text-xs">
+        <label>目标库:</label>
+        <select x-model="uploadLib" class="border rounded px-2 py-1">
+          <template x-for="l in (syncStatus.libraries||[])" :key="l">
+            <option :value="l" x-text="l"></option>
+          </template>
+        </select>
+        <span class="text-slate-400">或</span>
+        <input x-model="uploadLib" placeholder="新库名" class="border rounded px-2 py-1 w-32">
+      </div>
+      <div class="mt-2 text-xs text-slate-500" x-show="uploadMsg" x-text="uploadMsg"></div>
+    </div>
+  </div>
+
+  <div class="bg-white rounded-lg p-4 shadow-sm">
+    <div class="flex items-center justify-between mb-2">
+      <h3 class="font-semibold">实时事件流 (SSE)</h3>
+      <div class="text-xs">
+        <span class="dot" :class="sse.connected?'dot-green':'dot-gray'"></span>
+        <span x-text="sse.connected?'connected':'disconnected'"></span>
+        · <span x-text="sse.events.length"></span> 条
+        <button @click="sse.events=[]" class="ml-2 text-blue-600 hover:underline">清空</button>
+      </div>
+    </div>
+    <div class="scroll-y border rounded text-xs font-mono">
+      <template x-for="(ev,i) in sse.events.slice().reverse()" :key="i">
+        <div class="px-2 py-1 border-b last:border-b-0">
+          <span class="text-slate-400" x-text="(ev.ts||'').slice(11,19)"></span>
+          <span class="ml-2" :class="'ev-'+(ev.kind||'')" x-text="ev.kind"></span>
+          <span class="ml-2 text-slate-700" x-text="ev.target"></span>
+          <span class="ml-2 text-slate-500" x-text="ev.detail"></span>
+        </div>
+      </template>
+      <div x-show="!sse.events.length" class="px-2 py-3 text-slate-400">空闲中...</div>
+    </div>
+  </div>
+
+  <div class="bg-white rounded-lg p-4 shadow-sm">
+    <div class="flex items-center justify-between mb-2">
+      <h3 class="font-semibold">最近文件 (state.sqlite)</h3>
+      <button @click="loadRecent()" class="text-xs text-blue-600 hover:underline">刷新</button>
+    </div>
+    <table class="w-full text-sm">
+      <thead class="text-slate-500 text-xs uppercase">
+        <tr>
+          <th class="text-left py-1">路径</th>
+          <th class="text-left">库</th>
+          <th class="text-left">状态</th>
+          <th class="text-left">更新时间</th>
+        </tr>
+      </thead>
+      <tbody>
+        <template x-for="r in recent" :key="r.path">
+          <tr class="border-t">
+            <td class="py-1.5 text-xs" x-text="r.path"></td>
+            <td x-text="r.library"></td>
+            <td>
+              <span class="px-2 py-0.5 rounded text-xs"
+                :class="r.status==='done'?'bg-green-100 text-green-700':r.status==='error'?'bg-red-100 text-red-700':'bg-slate-100 text-slate-600'"
+                x-text="r.status"></span>
+            </td>
+            <td class="text-xs text-slate-500" x-text="(r.updated_at||'').slice(0,19).replace('T',' ')"></td>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- DATASETS -->
+<section x-show="tab==='datasets'" class="space-y-4">
+  <div class="bg-white rounded-lg p-4 shadow-sm">
+    <h3 class="font-semibold mb-2">RAGFlow Datasets</h3>
+    <table class="w-full text-sm">
+      <thead class="text-slate-500 text-xs uppercase">
+        <tr>
+          <th class="text-left py-1">名称</th>
+          <th class="text-right">文档</th>
+          <th class="text-right">分块</th>
+          <th class="text-left pl-3">动作</th>
+        </tr>
+      </thead>
+      <tbody>
+        <template x-for="d in datasets" :key="d.id">
+          <tr class="border-t">
+            <td class="py-1.5 font-medium" x-text="d.name"></td>
+            <td class="text-right" x-text="d.document_count"></td>
+            <td class="text-right" x-text="d.chunk_count"></td>
+            <td class="pl-3">
+              <button @click="viewDocs(d)" class="text-xs text-blue-600 hover:underline">查看文档</button>
+            </td>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+    <div x-show="docsOpen" class="mt-3 border-t pt-3">
+      <div class="text-xs text-slate-500 mb-1" x-text="'文档列表: '+(docsOpen?docsOpen.name:'')"></div>
+      <ul class="text-xs scroll-y border rounded p-2">
+        <template x-for="doc in docsList" :key="doc.id||doc.name">
+          <li class="py-0.5" x-text="doc.name + ' ('+(doc.run||doc.status||'?')+')'"></li>
+        </template>
+        <li x-show="!docsList.length" class="text-slate-400">无文档</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="bg-white rounded-lg p-4 shadow-sm">
+    <h3 class="font-semibold mb-2">检索 / 问答 (走 scheduler 路由)</h3>
+    <textarea x-model="askQuery" rows="2" class="w-full border rounded p-2 text-sm" placeholder="输入问题..."></textarea>
+    <div class="mt-2 flex items-center gap-2">
+      <label class="text-xs"><input type="checkbox" x-model="askPharmacy"> 药学模式</label>
+      <button @click="ask()" :disabled="askLoading"
+        class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white rounded text-sm"
+        x-text="askLoading?'请求中...':'提问'"></button>
+    </div>
+    <div x-show="askResult" class="mt-3 border rounded p-3 text-sm bg-slate-50">
+      <div class="text-xs text-slate-500 mb-1">
+        <span x-text="askResult?.provider"></span> /
+        <span x-text="askResult?.model_used"></span> ·
+        complexity: <span x-text="askResult?.complexity"></span> ·
+        domain: <span x-text="askResult?.domain"></span> ·
+        <span x-text="askResult?.elapsed+'s'"></span>
+      </div>
+      <pre x-text="askResult?.answer"></pre>
+    </div>
+  </div>
+</section>
+
+<!-- AUDIT -->
+<section x-show="tab==='audit'" class="space-y-4">
+  <div class="bg-white rounded-lg p-4 shadow-sm">
+    <div class="flex items-center justify-between">
+      <h3 class="font-semibold">审计中心</h3>
+      <div class="text-xs text-slate-500">
+        Claude: <span x-text="audit.claude_model||'?'"></span> ·
+        xstx 配置:
+        <span :class="audit.xstx_configured?'text-green-600':'text-red-600'"
+              x-text="audit.xstx_configured?'是':'否'"></span> ·
+        报告 <span x-text="audit.reports_count||0"></span> 份
+      </div>
+    </div>
+    <div class="text-xs text-slate-500 mt-1">
+      报告目录: <code x-text="audit.report_dir"></code>
+    </div>
+    <div class="mt-2 text-xs text-amber-700">
+      Phase 1.C 仅支持手工 POST /audit/run; 三级漏斗在 Phase 4 实施。
+    </div>
+  </div>
+
+  <div class="bg-white rounded-lg p-4 shadow-sm">
+    <div class="flex items-center justify-between mb-2">
+      <h3 class="font-semibold">历史报告</h3>
+      <button @click="loadReports()" class="text-xs text-blue-600 hover:underline">刷新</button>
+    </div>
+    <table class="w-full text-sm">
+      <thead class="text-slate-500 text-xs uppercase">
+        <tr><th class="text-left py-1">文件</th><th class="text-right">大小</th><th></th></tr>
+      </thead>
+      <tbody>
+        <template x-for="r in reports" :key="r.name">
+          <tr class="border-t">
+            <td class="py-1.5 text-xs" x-text="r.name"></td>
+            <td class="text-right text-xs" x-text="r.size+' B'"></td>
+            <td class="text-right">
+              <button @click="openReport(r.name)" class="text-xs text-blue-600 hover:underline">查看</button>
+            </td>
+          </tr>
+        </template>
+        <tr x-show="!reports.length"><td colspan="3" class="py-3 text-slate-400 text-xs">暂无报告</td></tr>
+      </tbody>
+    </table>
+    <div x-show="reportDetail" class="mt-3 border-t pt-3">
+      <div class="text-xs text-slate-500 mb-1">
+        <span x-text="reportDetail?.report_id"></span> · <span x-text="reportDetail?.timestamp"></span>
+      </div>
+      <pre class="text-xs scroll-y bg-slate-50 p-2 rounded" x-text="JSON.stringify(reportDetail,null,2)"></pre>
+    </div>
+  </div>
+</section>
+
+<!-- SETTINGS -->
+<section x-show="tab==='settings'" class="space-y-4">
+  <div class="bg-white rounded-lg p-4 shadow-sm">
+    <h3 class="font-semibold mb-2">服务配置</h3>
+    <div class="text-xs text-slate-600 space-y-1">
+      <div>Data root: <code x-text="health.data_root"></code></div>
+      <div>已配置 providers: <code x-text="(health.providers_configured||[]).join(', ')"></code></div>
+      <div>config.toml: <code>D:/RAG/config.toml</code></div>
+      <div>keys.ini:    <code>D:/private/keys.ini</code></div>
+      <div>state.sqlite: <code>D:/RAG/state.sqlite</code></div>
+    </div>
+  </div>
+  <div class="bg-white rounded-lg p-4 shadow-sm">
+    <h3 class="font-semibold mb-2">健康检查原始数据</h3>
+    <pre class="text-xs scroll-y bg-slate-50 p-2 rounded" x-text="JSON.stringify(health,null,2)"></pre>
+  </div>
+</section>
+
+</main>
+
+<script>
+function app(){return{
+  tabs:[
+    {id:'dashboard',label:'仪表盘'},
+    {id:'sync',label:'同步'},
+    {id:'datasets',label:'知识库'},
+    {id:'audit',label:'审计'},
+    {id:'settings',label:'设置'},
+  ],
+  tab:(location.hash||'#dashboard').replace('#',''),
+  health:{}, stats:{}, syncStatus:{}, audit:{},
+  datasets:[], docsOpen:null, docsList:[],
+  recent:[], reports:[], reportDetail:null,
+  askQuery:'', askPharmacy:false, askLoading:false, askResult:null,
+  uploadLib:'dev', uploadMsg:'', dragOver:false,
+  actionMsg:'',
+  sse:{connected:false,events:[],src:null},
+
+  init(){
+    this.refreshAll();
+    this.openSSE();
+    setInterval(()=>this.pollLight(),5000);
+    this.$watch('tab',v=>{location.hash='#'+v});
+    window.addEventListener('hashchange',()=>{this.tab=location.hash.replace('#','')||'dashboard'});
+  },
+  overallDot(){return {green:'dot-green',yellow:'dot-yellow',red:'dot-red'}[this.health.overall]||'dot-gray'},
+
+  async fetchJSON(u,opt){const r=await fetch(u,opt);if(!r.ok)throw new Error(u+' '+r.status);return r.json()},
+
+  async refreshAll(){
+    try{this.health=await this.fetchJSON('/api/services/health')}catch(e){this.health={overall:'red',error:String(e)}}
+    try{this.stats=await this.fetchJSON('/api/stats')}catch(e){}
+    try{this.syncStatus=await this.fetchJSON('/sync/status')}catch(e){}
+    try{this.audit=await this.fetchJSON('/audit/health')}catch(e){}
+    try{this.datasets=(await this.fetchJSON('/api/datasets')).datasets||[]}catch(e){}
+    this.loadRecent(); this.loadReports();
+  },
+  async pollLight(){
+    try{this.health=await this.fetchJSON('/api/services/health')}catch(e){}
+    try{this.syncStatus=await this.fetchJSON('/sync/status')}catch(e){}
+  },
+  async loadRecent(){
+    try{this.recent=(await this.fetchJSON('/api/recent-syncs?limit=30')).items||[]}catch(e){}
+  },
+  async loadReports(){
+    try{this.reports=(await this.fetchJSON('/audit/reports?limit=50')).reports||[]}catch(e){}
+  },
+  async openReport(name){
+    try{this.reportDetail=await this.fetchJSON('/audit/reports/'+encodeURIComponent(name))}catch(e){this.reportDetail={error:String(e)}}
+  },
+  async viewDocs(d){
+    this.docsOpen=d;
+    try{this.docsList=(await this.fetchJSON('/api/datasets/'+d.id+'/documents?limit=200')).documents||[]}catch(e){this.docsList=[]}
+  },
+
+  openSSE(){
+    try{
+      const s=new EventSource('/sync/events');
+      this.sse.src=s;
+      s.addEventListener('open',()=>{this.sse.connected=true});
+      s.addEventListener('hello',e=>{
+        try{const d=JSON.parse(e.data);(d.history||[]).forEach(ev=>this.sse.events.push(ev))}catch{}
+      });
+      s.addEventListener('sync',e=>{
+        try{const ev=JSON.parse(e.data); this.sse.events.push(ev); if(this.sse.events.length>500)this.sse.events.shift()}catch{}
+      });
+      s.onerror=()=>{this.sse.connected=false; setTimeout(()=>{if(!this.sse.connected){s.close();this.openSSE()}},5000)};
+    }catch(e){}
+  },
+
+  async ask(){
+    if(!this.askQuery.trim())return;
+    this.askLoading=true; this.askResult=null;
+    try{
+      this.askResult=await this.fetchJSON('/scheduler/query',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({query:this.askQuery,pharmacy_mode:this.askPharmacy})
+      });
+    }catch(e){this.askResult={answer:'[error] '+e,provider:'-',model_used:'-',complexity:'-',domain:'-',elapsed:0}}
+    this.askLoading=false;
+  },
+
+  async triggerReconcile(){
+    this.actionMsg='触发同步...';
+    try{await this.fetchJSON('/sync/reconcile',{method:'POST'}); this.actionMsg='同步已触发,看事件流。'}
+    catch(e){this.actionMsg='失败: '+e}
+    setTimeout(()=>this.actionMsg='',6000);
+  },
+
+  async onDrop(ev){
+    this.dragOver=false;
+    const files=[...(ev.dataTransfer.files||[])];
+    if(!files.length)return;
+    if(!this.uploadLib){this.uploadMsg='请填库名';return}
+    this.uploadMsg='上传中: '+files.length+' 个';
+    let ok=0,fail=0;
+    for(const f of files){
+      const fd=new FormData(); fd.append('file',f); fd.append('library',this.uploadLib);
+      try{await fetch('/api/upload',{method:'POST',body:fd}); ok++}catch(e){fail++}
+    }
+    this.uploadMsg='完成: '+ok+' 成功 / '+fail+' 失败 (后台 watcher 处理中)';
+    setTimeout(()=>this.uploadMsg='',8000);
+    this.loadRecent();
+  },
+}}
+</script>
+</body>
+</html>
