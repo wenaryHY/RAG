@@ -126,6 +126,7 @@ class SyncEngine:
             ("worker", self._worker_loop),
             ("debouncer", self._debounce_loop),
             ("poller", self._poll_loop),
+            ("parse-poller", self._parse_poll_loop),
         ):
             t = threading.Thread(target=fn, name=f"sync-{name}", daemon=True)
             t.start()
@@ -209,6 +210,45 @@ class SyncEngine:
             except Exception as e:  # noqa: BLE001
                 logger.warning("remote->local reconcile failed: %s", e)
             self._stop.wait(self.POLL_INTERVAL_SEC)
+
+    def _parse_poll_loop(self):
+        """后台轮询 RAGFlow 文档解析状态。
+
+        每 60s 查一次 status="parsing" 的文件，通过 RAGFlow API 获取
+        真实 run_status，RUNNING→继续等，DONE→更新为 completed，
+        FAIL/CANCEL→记录错误。
+        """
+        POLL_SEC = 60
+        while not self._stop.is_set():
+            self._stop.wait(POLL_SEC)
+            if self._stop.is_set():
+                return
+            try:
+                parsing_rows = st.list_by_status("parsing")
+            except Exception as e:
+                logger.warning("parse poll: list parsing failed: %s", e)
+                continue
+            for rec in parsing_rows:
+                if not rec.dataset_id or not rec.ragflow_doc_id:
+                    continue
+                try:
+                    doc = self.ragflow.get_document(rec.dataset_id, rec.ragflow_doc_id)
+                except Exception as e:
+                    logger.warning("parse poll: get_document %s failed: %s", rec.path, e)
+                    continue
+                run_status = doc.get("run_status", "") if isinstance(doc, dict) else ""
+                if run_status == "DONE":
+                    st.upsert(
+                        rec.path, status="done",
+                        parsed_at=datetime.now().isoformat(), error=None,
+                    )
+                    self._record_event("parse_complete", rec.library, rec.path)
+                    toast("RAG: 解析完成", f"{rec.library} ← {Path(rec.path).name}")
+                elif run_status in ("FAIL", "CANCEL"):
+                    err_msg = doc.get("error", run_status) if isinstance(doc, dict) else run_status
+                    st.upsert(rec.path, status="error", error=str(err_msg)[:300])
+                    self._record_event("parse_failed", rec.library, rec.path)
+                    logger.warning("parse failed for %s: %s", rec.path, err_msg)
 
     # ------------------------------------------------------------------
     # actions
@@ -338,8 +378,10 @@ class SyncEngine:
                 self.ragflow.parse_documents(ds_id, [doc_id])
             except Exception as e:
                 logger.warning("parse trigger failed for %s: %s", p.name, e)
+                st.upsert(str(p), status="error", error=f"parse trigger: {e}"[:300])
+                self._record_event("parse_failed", lib, p.name)
+                return
 
-        st.upsert(str(p), status="done", parsed_at=datetime.now().isoformat(), error=None)
         self._record_event("uploaded", lib, p.name)
         toast("RAG: 文件已入库", f"{lib} ← {p.name}")
 

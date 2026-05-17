@@ -56,9 +56,17 @@ async def health(request: Request):
 
 @router.post("/run", response_model=AuditResponse)
 async def run_audit(req: AuditRequest, request: Request):
-    """阶段 1.C 基础版：全量两两比对。
-    阶段 4 改为 embedding→Flash→Opus 三级漏斗。
+    """[已弃用] 全量 Opus 两两比对。
+    请改用 POST /audit/run-funnel (三级漏斗, 成本可控)。
+    此端点保留用于 <=MAX_DOCS 的小批量快速检测。
     """
+    MAX_DOCS = 8
+    if len(req.documents) > MAX_DOCS:
+        raise HTTPException(
+            413,
+            f"/audit/run 最多 {MAX_DOCS} 篇文档 (当前 {len(req.documents)} 篇)。"
+            " 请改用 POST /audit/run-funnel 运行全库三级漏斗审计。",
+        )
     config = request.app.state.config
     if "xstx" not in config.keys:
         raise HTTPException(503, "xstx (Claude) key missing")

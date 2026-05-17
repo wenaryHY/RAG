@@ -29,6 +29,6 @@ venv/
 .vscode/
 *.swp
 
-# Windows
-Thumbs.db
-desktop.ini
+# Secrets — NEVER commit real keys
+keys.ini
+private/
