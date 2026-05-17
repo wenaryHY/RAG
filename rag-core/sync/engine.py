@@ -276,7 +276,8 @@ class SyncEngine:
             st.upsert(rec.path, status="error", error="original file missing")
             return
 
-        if needs_ocr(p):
+        suff = p.suffix.lower()
+        if needs_ocr(p) or suff in {".pdf", ".docx", ".pptx", ".xlsx"}:
             logger.info("parse poll: 0-chunk, trying OCR for %s", p.name)
             ocr_txt = ocr_file(p)
             if ocr_txt and ocr_txt.exists():
