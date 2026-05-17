@@ -40,7 +40,7 @@ async def call_claude(
     model: str = "claude-opus-4-7",
     max_tokens: int = 2048,
     temperature: float = 0.1,
-    timeout: float = 120.0,
+    timeout: float = 180.0,
 ) -> dict:
     headers = {
         "Authorization": f"Bearer {xstx_key.key}",

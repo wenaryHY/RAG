@@ -38,9 +38,14 @@ async def chat_completion(
     *,
     temperature: float = 0.3,
     max_tokens: int = 2048,
-    timeout: float = 60.0,
+    timeout: float = 180.0,
+    thinking: Optional[dict] = None,
 ) -> dict:
-    """OpenAI 兼容协议下的 /chat/completions 调用。"""
+    """OpenAI 兼容协议下的 /chat/completions 调用。
+
+    thinking: 透传给上游的 reasoning 控制参数, 例如 {"type": "disabled"}
+              用于关闭 DeepSeek v4 系列等 reasoning 模型的思考过程。
+    """
     headers = {
         "Authorization": f"Bearer {provider_key.key}",
         "Content-Type": "application/json",
@@ -54,6 +59,8 @@ async def chat_completion(
         "max_tokens": max_tokens,
         "temperature": temperature,
     }
+    if thinking is not None:
+        payload["thinking"] = thinking
 
     url = f"{provider_key.base_url.rstrip('/')}/chat/completions"
     async with httpx.AsyncClient(timeout=timeout) as client:

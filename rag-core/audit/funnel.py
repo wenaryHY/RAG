@@ -119,6 +119,7 @@ async def _stage2_flash(
         target, deepseek_key,
         [{"role": "user", "content": prompt}],
         temperature=0.0, max_tokens=16,
+        thinking={"type": "disabled"},
     )
     raw = text_of(resp) or ""
     return _flash_verdict(raw)
