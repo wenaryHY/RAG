@@ -380,12 +380,12 @@ class SyncEngine:
             logger.info("skip unsupported %s", p.name)
             return
 
-        # ---- OCR 预处理: 图片/扫描版 EPUB → .txt ----
+        # ---- OCR 预处理: 图片/扫描版 EPUB/PDF → .md ----
         ocr_txt: Optional[Path] = None
         if needs_ocr(p):
             ocr_txt = ocr_file(p)
             if ocr_txt and ocr_txt.exists():
-                self.enqueue_file(ocr_txt)  # FileSync 自动拾取 .txt 上传
+                self.enqueue_file(ocr_txt)  # FileSync 自动拾取 .md 上传
         # ---- end OCR ----
 
         size = p.stat().st_size

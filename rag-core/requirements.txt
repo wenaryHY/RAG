@@ -15,7 +15,7 @@ pytest==8.3.4
 pytest-asyncio==0.24.0
 
 # OCR — PaddleOCR (CPU, 中文优化)
-paddlepaddle>=3.0.0
+paddlepaddle==3.2.0
 paddleocr>=2.9.0
 pillow>=10.0
 # pdf2image retained for PDF-fallback OCR
