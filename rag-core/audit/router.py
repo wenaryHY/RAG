@@ -220,6 +220,11 @@ async def list_runs(limit: int = 30):
 
 @router.post("/runs/{run_id}/seen")
 async def mark_run_seen(run_id: int):
+    """标记审计报告为"已读" (去掉仪表盘红点)。
+
+    安全注意: 无认证 — 假定 rag-core 仅监听 127.0.0.1，
+    不会被外部访问。若日后改为公网绑定，需加共享密钥校验。
+    """
     with db.session() as s:
         run = s.get(db.AuditRun, run_id)
         if not run:

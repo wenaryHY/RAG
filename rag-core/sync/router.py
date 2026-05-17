@@ -38,33 +38,27 @@ async def events_sse(request: Request):
 
     协议:
       - 连接建立先发一条 event: hello 带最近 5 条历史
-      - 之后只要 engine.recent_events 增量出现新事件就 event: sync
+      - 之后只要有新事件就 event: sync
       - 空闲每 15 秒发一个 ": ping" 心跳防超时
 
-    实现: engine.recent_events 在长度 > 500 时会被截断到 300,
-    所以下游 cursor 用整数 index, 发现 cur_len 比上次还小就 reset。
+    线程安全: 用 engine.snapshot_events() 原子快照替代直接读 recent_events。
     """
     engine = request.app.state.sync_engine
 
     async def gen():
-        events = engine.recent_events
-        history = list(events[-5:])
+        new_events, cursor = engine.snapshot_events(since=0)
+        history = new_events[-5:] if new_events else []
         yield f"event: hello\ndata: {json.dumps({'history': history}, ensure_ascii=False)}\n\n"
 
-        last_len = len(events)
         idle_count = 0
         try:
             while True:
                 if await request.is_disconnected():
                     break
-                events = engine.recent_events
-                cur_len = len(events)
-                if cur_len < last_len:
-                    last_len = max(0, cur_len - 50)
-                if cur_len > last_len:
-                    for ev in events[last_len:cur_len]:
+                new_events, cursor = engine.snapshot_events(since=cursor)
+                if new_events:
+                    for ev in new_events:
                         yield f"event: sync\ndata: {json.dumps(ev, ensure_ascii=False)}\n\n"
-                    last_len = cur_len
                     idle_count = 0
                 else:
                     idle_count += 1

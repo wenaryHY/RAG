@@ -19,6 +19,7 @@ import hashlib
 import json
 import logging
 import random
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -95,12 +96,18 @@ def _cache_put(sha_a: str, sha_b: str, *, flash: Optional[str] = None, opus: Opt
         s.commit()
 
 
+_VERDICT_RE = re.compile(r"^\s*(yes|maybe|no)\b", re.IGNORECASE)
+
+
 def _flash_verdict(text: str) -> str:
-    t = text.lower().strip()
-    if t.startswith("yes") or "yes" == t[:3]:
-        return "yes"
-    if t.startswith("maybe"):
-        return "maybe"
+    """严格匹配开头的 yes/maybe/no 词边界。
+
+    防止 "yesterday"、"yes and no"、"node" 等被误判。
+    fallback 默认 "no"。
+    """
+    m = _VERDICT_RE.match(text or "")
+    if m:
+        return m.group(1).lower()
     return "no"
 
 

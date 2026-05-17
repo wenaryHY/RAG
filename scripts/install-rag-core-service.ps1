@@ -9,7 +9,11 @@ $ErrorActionPreference = 'Stop'
 
 $NSSM      = 'D:\RAG\tools\nssm.exe'
 $SVC_NAME  = 'rag-core'
-$PYTHON    = 'C:\Users\Wenary\AppData\Local\Programs\Python\Python312\python.exe'
+$PYTHON    = if (Get-Command python -ErrorAction SilentlyContinue) {
+    & python -c "import sys; print(sys.executable)"
+} else {
+    throw "python not found on PATH"
+}
 $WORKDIR   = 'D:\RAG\rag-core'
 $ARGS      = '-B main.py'
 $LOG_OUT   = 'D:\RAG\logs\rag-core.out.log'

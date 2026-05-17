@@ -9,3 +9,7 @@ apscheduler==3.11.0
 tenacity==9.1.2
 winotify==1.1.0
 tomli==2.2.1; python_version < "3.11"
+
+# testing
+pytest==8.3.4
+pytest-asyncio==0.24.0

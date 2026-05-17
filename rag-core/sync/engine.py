@@ -94,18 +94,20 @@ class SyncEngine:
 
         self._queue: "Queue[tuple[str, Path]]" = Queue()
         self._pending: dict[Path, float] = {}
-        self._lock = threading.Lock()
+        self._lock = threading.Lock()  # _pending 用
 
         self._observer: Optional[Observer] = None
         self._stop = threading.Event()
         self._workers: list[threading.Thread] = []
 
-        # cache: library_name -> dataset id
+        # cache: library_name -> dataset id（多线程: worker / poller / FastAPI 都读）
         self._lib_cache: dict[str, str] = {}
         self._lib_cache_at = 0.0
+        self._cache_lock = threading.RLock()
 
-        # in-memory tail
+        # in-memory tail（worker 写, SSE/HTTP 读）
         self.recent_events: list[dict] = []
+        self._events_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # public API
@@ -142,13 +144,17 @@ class SyncEngine:
                 pass
 
     def status(self) -> dict:
+        with self._cache_lock:
+            libraries = list(self._lib_cache.keys())
+        with self._events_lock:
+            recent = list(self.recent_events[-20:])
         return {
             "data_root": str(self.data_root),
             "queue_size": self._queue.qsize(),
             "pending": len(self._pending),
-            "libraries": list(self._lib_cache.keys()),
+            "libraries": libraries,
             "observer_alive": bool(self._observer and self._observer.is_alive()),
-            "recent_events": self.recent_events[-20:],
+            "recent_events": recent,
         }
 
     def enqueue_file(self, p: Path):
@@ -254,16 +260,20 @@ class SyncEngine:
     # actions
     # ------------------------------------------------------------------
     def _refresh_lib_cache(self, *, force: bool = False) -> dict[str, str]:
-        if not force and time.time() - self._lib_cache_at < 10:
-            return self._lib_cache
+        with self._cache_lock:
+            if not force and time.time() - self._lib_cache_at < 10:
+                return dict(self._lib_cache)
+        # 网络调用放锁外, 避免阻塞其他读
         try:
             datasets = self.ragflow.list_datasets()
         except Exception as e:
             logger.warning("list_datasets failed: %s", e)
-            return self._lib_cache
-        self._lib_cache = {d["name"]: d["id"] for d in datasets if d.get("id")}
-        self._lib_cache_at = time.time()
-        return self._lib_cache
+            with self._cache_lock:
+                return dict(self._lib_cache)
+        with self._cache_lock:
+            self._lib_cache = {d["name"]: d["id"] for d in datasets if d.get("id")}
+            self._lib_cache_at = time.time()
+            return dict(self._lib_cache)
 
     def _ensure_dataset(self, name: str) -> Optional[str]:
         cache = self._refresh_lib_cache()
@@ -283,7 +293,8 @@ class SyncEngine:
             return None
         ds_id = data.get("id") if isinstance(data, dict) else None
         if ds_id:
-            self._lib_cache[name] = ds_id
+            with self._cache_lock:
+                self._lib_cache[name] = ds_id
             self._record_event("library_created", name, ds_id)
             toast("RAG: 新建知识库", f"已创建 {name}")
         return ds_id
@@ -411,12 +422,34 @@ class SyncEngine:
     # tail buffer
     # ------------------------------------------------------------------
     def _record_event(self, kind: str, target: str, detail: str):
-        self.recent_events.append({
-            "ts": datetime.now().isoformat(),
-            "kind": kind,
-            "target": target,
-            "detail": detail,
-        })
-        # cap
-        if len(self.recent_events) > 500:
-            self.recent_events = self.recent_events[-300:]
+        with self._events_lock:
+            self.recent_events.append({
+                "ts": datetime.now().isoformat(),
+                "kind": kind,
+                "target": target,
+                "detail": detail,
+            })
+            # cap
+            if len(self.recent_events) > 500:
+                self.recent_events = self.recent_events[-300:]
+
+    def snapshot_events(self, since: int = 0) -> tuple[list[dict], int]:
+        """SSE 用的原子快照: 返回 (新事件列表, 当前 cursor)。
+
+        - since: 上次 cursor，0 表示首次
+        - 内部处理 ring-buffer 截断: 若 since > 当前总长说明被截断, 退一档
+        - 返回的 cursor 等于"已发送总数"
+        """
+        with self._events_lock:
+            total_seen = getattr(self, "_events_seq", 0)
+            if not hasattr(self, "_events_seq"):
+                self._events_seq = len(self.recent_events)
+                total_seen = self._events_seq
+            # 若调用方落后过多 (被 ring-buffer 截断)，从手头最早事件开始
+            buf_len = len(self.recent_events)
+            backlog_start = max(0, total_seen - buf_len)
+            if since < backlog_start:
+                since = backlog_start
+            offset = since - backlog_start
+            new_events = list(self.recent_events[offset:])
+            return new_events, backlog_start + buf_len
