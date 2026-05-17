@@ -20,6 +20,7 @@ from fastapi.responses import JSONResponse
 import config as cfg_mod
 import db
 from ragflow_client import RAGFlowClient
+from scheduler.router import router as scheduler_router
 
 logger = logging.getLogger("rag-core")
 logging.basicConfig(
@@ -55,6 +56,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="rag-core", version="0.1.0", lifespan=lifespan)
+app.include_router(scheduler_router)
 
 
 @app.get("/health")
