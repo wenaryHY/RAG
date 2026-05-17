@@ -157,7 +157,7 @@ async def query(req: QueryRequest, request: Request):
 
     answer = text_of(result) or ""
     if not answer.strip():
-        answer = f"[provider {target.provider}/{target.model} 返回空响应，请重试或换模型]"
+        answer = "[模型服务返回空响应，请稍后重试]"
     elapsed = round(time.time() - start, 2)
     ts = datetime.now().isoformat()
 

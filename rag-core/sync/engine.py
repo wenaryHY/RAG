@@ -335,6 +335,10 @@ class SyncEngine:
             return
         if p.name.startswith(".") or p.name.startswith("~$"):
             return
+        if p.name in ("Thumbs.db", "desktop.ini", ".DS_Store"):
+            return
+        if p.suffix.lower() in (".tmp", ".lock", ".part"):
+            return
         if p.suffix.lower() not in SUPPORTED_EXT:
             logger.info("skip unsupported %s", p.name)
             return

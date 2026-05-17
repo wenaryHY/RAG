@@ -91,4 +91,11 @@ def get_engine():
 
 
 def session() -> Session:
+    """获取新 Session。调用方负责 close。
+
+    对于批量操作建议用:
+        with session() as s:
+            ...
+    以自动关闭连接。当前低吞吐量下直接调用也可接受。
+    """
     return Session(get_engine())

@@ -113,6 +113,8 @@ class RAGFlowClient:
         return []
 
     def upload_document(self, dataset_id: str, file_path: Path, metadata: Optional[dict] = None) -> dict:
+        # RAGFlow v0.25.4 的文档上传接受额外的 multipart form-data 字段
+        # meta_fields 的值是 JSON 字符串，由服务端解析后存入文档元数据
         with file_path.open("rb") as f:
             files = {"file": (file_path.name, f, "application/octet-stream")}
             data_kwargs: dict = {"files": files}

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import configparser
+import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -16,7 +17,7 @@ if sys.version_info >= (3, 11):
 else:
     import tomli as tomllib  # type: ignore[no-redef]
 
-CONFIG_PATH = Path("D:/RAG/config.toml")
+CONFIG_PATH = Path(os.environ.get("RAG_CONFIG_PATH", "D:/RAG/config.toml"))
 
 
 @dataclass

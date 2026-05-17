@@ -50,7 +50,7 @@ async def events_sse(request: Request):
         history = new_events[-5:] if new_events else []
         yield f"event: hello\ndata: {json.dumps({'history': history}, ensure_ascii=False)}\n\n"
 
-        idle_count = 0
+        idle_iterations = 0
         try:
             while True:
                 if await request.is_disconnected():
@@ -59,12 +59,12 @@ async def events_sse(request: Request):
                 if new_events:
                     for ev in new_events:
                         yield f"event: sync\ndata: {json.dumps(ev, ensure_ascii=False)}\n\n"
-                    idle_count = 0
+                    idle_iterations = 0
                 else:
-                    idle_count += 1
-                    if idle_count >= 15:
+                    idle_iterations += 1
+                    if idle_iterations >= 15:
                         yield ": ping\n\n"
-                        idle_count = 0
+                        idle_iterations = 0
                 await asyncio.sleep(1.0)
         except asyncio.CancelledError:
             return

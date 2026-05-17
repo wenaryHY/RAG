@@ -31,13 +31,6 @@ default_delimiter    = "\n\n"
 enable_embedding_classifier = false
 fallback_to_lmstudio        = true
 
-[scheduler.routes]
-# 分类 → provider 的默认映射
-simple_general = "openrouter"
-simple_pharmacy = "deepseek_flash"
-medium         = "deepseek_flash"
-complex        = "deepseek_pro"
-
 [providers.deepseek]
 base_url = "https://api.deepseek.com"
 flash_model = "deepseek-v4-flash"
