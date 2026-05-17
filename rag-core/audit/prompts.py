@@ -64,3 +64,16 @@ def render_error_check(source: str, content: str) -> str:
         .replace("<<SOURCE>>", source)
         .replace("<<CONTENT>>", content[:3000])
     )
+
+
+FIX_PROMPT = """你是知识库修正专家。以下文档片段被标记为存在冲突/错误，请生成修正后的文本。
+
+原文来源：<<SOURCE>>
+原文内容：
+<<CONTENT>>
+
+冲突/错误描述：<<ISSUE>>
+建议处理方式：<<RECOMMENDATION>>
+
+请只返回修正后的文本，不要添加任何解释、不要 markdown、不要 JSON。直接输出修正后的完整文本。
+如果原文无需修改，原样返回原文。"""
