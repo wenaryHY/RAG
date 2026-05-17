@@ -1,0 +1,73 @@
+# RAG 系统单一配置源
+# 由 rag-core / rag-tray 统一读取
+# 修改后需要重启 rag-core 服务
+
+[paths]
+data_root  = "D:/RAG/RAGfiles"
+report_dir = "D:/RAG/reports"
+log_dir    = "D:/RAG/logs"
+state_db   = "D:/RAG/state.sqlite"
+keys_file  = "D:/private/keys.ini"
+
+[ragflow]
+base_url = "http://127.0.0.1:9380"
+# RAGFlow 控制台 -> API Key 生成后填入
+api_key  = ""
+
+[server]
+host = "127.0.0.1"
+port = 8840
+
+[sync]
+poll_interval_sec    = 30
+debounce_sec         = 5
+default_language     = "Chinese"
+default_chunk_tokens = 256
+default_delimiter    = "\n\n"
+
+[scheduler]
+# Phase 3 切到 embedding 分类器
+enable_embedding_classifier = false
+fallback_to_lmstudio        = true
+
+[scheduler.routes]
+# 分类 → provider 的默认映射
+simple_general = "openrouter"
+simple_pharmacy = "deepseek_flash"
+medium         = "deepseek_flash"
+complex        = "deepseek_pro"
+
+[providers.deepseek]
+base_url = "https://api.deepseek.com"
+flash_model = "deepseek-v4-flash"
+pro_model   = "deepseek-v4-pro"
+
+[providers.openrouter]
+base_url = "https://openrouter.ai/api/v1"
+default_model = "deepseek/deepseek-v4-flash:free"
+
+[providers.xstx]
+# 注意：xstx 的 base_url 在 keys.ini 里独立配置
+opus_model = "claude-opus-4-7"
+
+[providers.siliconflow]
+base_url = "https://api.siliconflow.cn/v1"
+embedding_model = "BAAI/bge-m3"
+
+[providers.lmstudio]
+base_url = "http://127.0.0.1:1234/v1"
+default_model = "qwen-3-1.7b-instruct"
+
+[audit]
+weekly_cron            = "0 2 * * 0"   # 周日 02:00
+opus_calls_per_run_max = 100
+similarity_threshold   = 0.82
+flash_yes_or_maybe_only = true
+
+[notifications]
+desktop_toast = true
+toast_app_name = "RAG System"
+
+[panel]
+# 单文件 HTML 前端的资源目录（rag-core 启动后挂载到 /ui）
+static_dir = "D:/RAG/rag-core/panel/static"
