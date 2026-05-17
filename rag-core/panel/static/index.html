@@ -275,9 +275,66 @@
     <div class="text-xs text-slate-500 mt-1">
       报告目录: <code x-text="audit.report_dir"></code>
     </div>
-    <div class="mt-2 text-xs text-amber-700">
-      Phase 1.C 仅支持手工 POST /audit/run; 三级漏斗在 Phase 4 实施。
+    <div class="mt-3 flex items-center gap-2">
+      <button @click="runFunnel()" :disabled="funnelLoading"
+        class="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 disabled:bg-slate-300 text-white rounded text-sm"
+        x-text="funnelLoading?'运行中...(可能数分钟)':'运行三级漏斗审计 (全库)'"></button>
+      <span class="text-xs text-slate-500" x-show="funnelMsg" x-text="funnelMsg"></span>
     </div>
+    <div x-show="funnelResult" class="mt-3 text-xs bg-slate-50 border rounded p-2">
+      <div>chunks=<span x-text="funnelResult?.chunks_total"></span> ·
+        pairs=<span x-text="funnelResult?.embedding_pairs"></span> ·
+        flash=<span x-text="funnelResult?.flash_calls"></span>
+        (yes=<span x-text="funnelResult?.flash_yes"></span>/maybe=<span x-text="funnelResult?.flash_maybe"></span>) ·
+        opus=<span x-text="funnelResult?.opus_calls"></span><span x-show="funnelResult?.opus_calls_capped" class="text-red-600"> [CAPPED]</span> ·
+        cache=<span x-text="funnelResult?.cache_hits"></span> ·
+        cost=¥<span x-text="funnelResult?.cost_estimate"></span> ·
+        findings=<span x-text="funnelResult?.findings_count"></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="bg-white rounded-lg p-4 shadow-sm">
+    <div class="flex items-center justify-between mb-2">
+      <h3 class="font-semibold">审计运行历史 (audit_runs)</h3>
+      <button @click="loadRuns()" class="text-xs text-blue-600 hover:underline">刷新</button>
+    </div>
+    <table class="w-full text-sm">
+      <thead class="text-slate-500 text-xs uppercase">
+        <tr>
+          <th class="text-left py-1">#</th>
+          <th class="text-left">started</th>
+          <th class="text-right">pairs</th>
+          <th class="text-right">flash</th>
+          <th class="text-right">opus</th>
+          <th class="text-right">findings</th>
+          <th class="text-right">cost</th>
+          <th class="text-left">status</th>
+        </tr>
+      </thead>
+      <tbody>
+        <template x-for="r in runs" :key="r.id">
+          <tr class="border-t">
+            <td class="py-1.5" x-text="r.id"></td>
+            <td class="text-xs" x-text="(r.started_at||'').slice(0,19).replace('T',' ')"></td>
+            <td class="text-right" x-text="r.embedding_pairs"></td>
+            <td class="text-right" x-text="r.flash_calls"></td>
+            <td class="text-right" x-text="r.opus_calls"></td>
+            <td class="text-right">
+              <span x-text="r.findings_count"></span>
+              <span x-show="!r.seen && r.findings_count>0" class="ml-1 inline-block w-2 h-2 rounded-full bg-red-500"></span>
+            </td>
+            <td class="text-right" x-text="r.cost_estimate||0"></td>
+            <td>
+              <span class="px-2 py-0.5 rounded text-xs"
+                :class="r.status==='completed'?'bg-green-100 text-green-700':r.status==='running'?'bg-blue-100 text-blue-700':'bg-red-100 text-red-700'"
+                x-text="r.status"></span>
+            </td>
+          </tr>
+        </template>
+        <tr x-show="!runs.length"><td colspan="8" class="py-3 text-slate-400 text-xs">暂无运行记录</td></tr>
+      </tbody>
+    </table>
   </div>
 
   <div class="bg-white rounded-lg p-4 shadow-sm">
@@ -344,6 +401,7 @@ function app(){return{
   health:{}, stats:{}, syncStatus:{}, audit:{},
   datasets:[], docsOpen:null, docsList:[],
   recent:[], reports:[], reportDetail:null,
+  runs:[], funnelLoading:false, funnelMsg:'', funnelResult:null,
   askQuery:'', askPharmacy:false, askLoading:false, askResult:null,
   uploadLib:'dev', uploadMsg:'', dragOver:false,
   actionMsg:'',
@@ -366,7 +424,7 @@ function app(){return{
     try{this.syncStatus=await this.fetchJSON('/sync/status')}catch(e){}
     try{this.audit=await this.fetchJSON('/audit/health')}catch(e){}
     try{this.datasets=(await this.fetchJSON('/api/datasets')).datasets||[]}catch(e){}
-    this.loadRecent(); this.loadReports();
+    this.loadRecent(); this.loadReports(); this.loadRuns();
   },
   async pollLight(){
     try{this.health=await this.fetchJSON('/api/services/health')}catch(e){}
@@ -377,6 +435,24 @@ function app(){return{
   },
   async loadReports(){
     try{this.reports=(await this.fetchJSON('/audit/reports?limit=50')).reports||[]}catch(e){}
+  },
+  async loadRuns(){
+    try{this.runs=(await this.fetchJSON('/audit/runs?limit=30')).runs||[]}catch(e){}
+  },
+  async runFunnel(){
+    if(this.funnelLoading)return;
+    this.funnelLoading=true; this.funnelMsg='提交中...'; this.funnelResult=null;
+    try{
+      const r=await fetch('/audit/run-funnel',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({dataset_ids:null,max_per_doc:30,sample_for_error:3})
+      });
+      if(!r.ok)throw new Error('HTTP '+r.status);
+      this.funnelResult=await r.json();
+      this.funnelMsg='完成 status='+this.funnelResult.status;
+    }catch(e){this.funnelMsg='失败: '+e}
+    this.funnelLoading=false;
+    this.loadRuns(); this.loadReports();
   },
   async openReport(name){
     try{this.reportDetail=await this.fetchJSON('/audit/reports/'+encodeURIComponent(name))}catch(e){this.reportDetail={error:String(e)}}

@@ -137,6 +137,31 @@ class RAGFlowClient:
         return data.get("data", data) if isinstance(data, dict) else data
 
     # ------------------------------------------------------------------
+    # chunks
+    # ------------------------------------------------------------------
+    def list_chunks(
+        self,
+        dataset_id: str,
+        document_id: str,
+        *,
+        page: int = 1,
+        page_size: int = 200,
+    ) -> list[dict]:
+        params = {"page": page, "page_size": page_size}
+        data = self._request(
+            "GET",
+            f"/api/v1/datasets/{dataset_id}/documents/{document_id}/chunks",
+            params=params,
+        )
+        if isinstance(data, dict):
+            payload = data.get("data", data)
+            if isinstance(payload, dict):
+                return payload.get("chunks", []) or []
+            if isinstance(payload, list):
+                return payload
+        return []
+
+    # ------------------------------------------------------------------
     # retrieval
     # ------------------------------------------------------------------
     def retrieve(

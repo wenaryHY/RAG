@@ -10,7 +10,11 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from .client import call_claude, parse_json
+from .funnel import run_funnel_audit
 from .prompts import render_conflict, render_error_check
+
+import db
+from sqlmodel import select, desc
 
 router = APIRouter(prefix="/audit", tags=["audit"])
 
@@ -149,3 +153,69 @@ async def get_report(name: str, request: Request):
         return json.loads(fp.read_text(encoding="utf-8"))
     except Exception as e:
         raise HTTPException(500, f"failed to read report: {e}")
+
+
+# ----------------------------------------------------------------------
+# Phase 4: 三级漏斗 (embedding -> Flash -> Opus)
+# ----------------------------------------------------------------------
+
+class FunnelRunRequest(BaseModel):
+    dataset_ids: Optional[list[str]] = None
+    max_per_doc: int = 30
+    sample_for_error: int = 3
+
+
+@router.post("/run-funnel")
+async def run_funnel(req: FunnelRunRequest, request: Request):
+    """同步执行三级漏斗审计 (可能耗时数分钟)。
+
+    用 dataset_ids=None 跑全部知识库。
+    返回 FunnelStats 摘要 + 报告路径。
+    """
+    config = request.app.state.config
+    rag = request.app.state.ragflow
+    missing = [k for k in ("siliconflow", "deepseek", "xstx") if k not in config.keys]
+    if missing:
+        raise HTTPException(503, f"missing keys: {missing}")
+    stats = await run_funnel_audit(
+        config, rag,
+        dataset_ids=req.dataset_ids,
+        max_per_doc=req.max_per_doc,
+        sample_for_error=req.sample_for_error,
+    )
+    return {
+        "status": stats.status,
+        "started_at": stats.started_at,
+        "finished_at": stats.finished_at,
+        "chunks_total": stats.chunks_total,
+        "embedding_pairs": stats.embedding_pairs,
+        "flash_calls": stats.flash_calls,
+        "flash_yes": stats.flash_yes,
+        "flash_maybe": stats.flash_maybe,
+        "opus_calls": stats.opus_calls,
+        "opus_calls_capped": stats.opus_calls_capped,
+        "cache_hits": stats.cache_hits,
+        "cost_estimate": stats.cost_estimate,
+        "findings_count": len(stats.findings),
+        "errors": stats.errors,
+    }
+
+
+@router.get("/runs")
+async def list_runs(limit: int = 30):
+    with db.session() as s:
+        rows = s.exec(
+            select(db.AuditRun).order_by(desc(db.AuditRun.id)).limit(limit)
+        ).all()
+    return {"runs": [r.model_dump() for r in rows]}
+
+
+@router.post("/runs/{run_id}/seen")
+async def mark_run_seen(run_id: int):
+    with db.session() as s:
+        run = s.get(db.AuditRun, run_id)
+        if not run:
+            raise HTTPException(404, "run not found")
+        run.seen = True
+        s.add(run); s.commit()
+    return {"status": "ok"}

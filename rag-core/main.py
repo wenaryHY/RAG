@@ -22,9 +22,13 @@ import db
 from ragflow_client import RAGFlowClient
 from scheduler.router import router as scheduler_router
 from audit.router import router as audit_router
+from audit.funnel import run_funnel_audit
 from sync.router import router as sync_router
 from sync.engine import SyncEngine
 from panel.router import router as panel_router
+
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 
 logger = logging.getLogger("rag-core")
 logging.basicConfig(
@@ -59,8 +63,38 @@ async def lifespan(app: FastAPI):
     app.state.sync_engine.start()
     logger.info("sync engine started")
 
+    # weekly audit cron (Phase 4)
+    scheduler = AsyncIOScheduler()
+    cron_expr = config.raw["audit"].get("weekly_cron", "0 2 * * 0")
+    try:
+        trigger = CronTrigger.from_crontab(cron_expr)
+        async def _weekly_audit():
+            try:
+                logger.info("weekly funnel audit starting (cron=%s)", cron_expr)
+                stats = await run_funnel_audit(config, app.state.ragflow)
+                logger.info(
+                    "weekly audit done: chunks=%d pairs=%d flash=%d opus=%d findings=%d cost=%.4f",
+                    stats.chunks_total, stats.embedding_pairs,
+                    stats.flash_calls, stats.opus_calls,
+                    len(stats.findings), stats.cost_estimate,
+                )
+            except Exception as e:
+                logger.exception("weekly audit failed: %s", e)
+        scheduler.add_job(_weekly_audit, trigger, id="weekly-funnel-audit", replace_existing=True)
+        scheduler.start()
+        app.state.scheduler = scheduler
+        logger.info("apscheduler started, weekly audit cron=%s", cron_expr)
+    except Exception as e:
+        logger.warning("apscheduler init failed: %s", e)
+        app.state.scheduler = None
+
     yield
 
+    try:
+        if getattr(app.state, "scheduler", None):
+            app.state.scheduler.shutdown(wait=False)
+    except Exception:
+        pass
     try:
         app.state.sync_engine.stop()
     except Exception:
