@@ -25,9 +25,13 @@ $ARGS      = '-B main.py'
 $LOG_OUT   = 'D:\RAG\logs\rag-core.out.log'
 $LOG_ERR   = 'D:\RAG\logs\rag-core.err.log'
 
-# 管理员权限检查
+# 管理员权限检查 — 没有则自动提权重启
 net session 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "must run as Administrator (right-click -> Run with PowerShell)" }
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "需要管理员权限, 自动重新启动..."
+    Start-Process powershell -Verb RunAs -ArgumentList "-ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Wait
+    exit $LASTEXITCODE
+}
 
 # 如果已有同名服务先删
 $svc = Get-Service $SVC_NAME -ErrorAction SilentlyContinue
@@ -49,7 +53,6 @@ Write-Host "installing $SVC_NAME"
 & $NSSM set $SVC_NAME DisplayName        'RAG Core (scheduler+audit+sync+panel)'
 & $NSSM set $SVC_NAME Description        'RAG core unified service on 127.0.0.1:8840'
 & $NSSM set $SVC_NAME Start              SERVICE_AUTO_START
-& $NSSM set $SVC_NAME DependOnService    'com.docker.service'
 & $NSSM set $SVC_NAME AppStdout          $LOG_OUT
 & $NSSM set $SVC_NAME AppStderr          $LOG_ERR
 & $NSSM set $SVC_NAME AppRotateFiles     1

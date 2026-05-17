@@ -122,11 +122,14 @@ if _static_dir.exists():
 def health():
     config: cfg_mod.Config = app.state.config
     ragflow_ok = app.state.ragflow.ping()
+    sync = getattr(app.state, "sync_engine", None)
+    sync_init = "initialized" if (sync and sync._initialized) else "initializing" if sync else "unknown"
     return JSONResponse(
         {
             "service": "rag-core",
             "version": "0.1.0",
             "status": "ok" if ragflow_ok else "degraded",
+            "sync_status": sync_init,
             "checks": {
                 "ragflow": "ok" if ragflow_ok else "fail",
                 "state_db": str(config.state_db),

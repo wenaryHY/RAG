@@ -111,15 +111,13 @@ class SyncEngine:
         self.recent_events: list[dict] = []
         self._events_lock = threading.Lock()
 
+        self._initialized = False
+
     # ------------------------------------------------------------------
     # public API
     # ------------------------------------------------------------------
     def start(self):
         self.data_root.mkdir(parents=True, exist_ok=True)
-        # initial reconcile (synchronous to detect what's there before we start watching)
-        self._refresh_lib_cache(force=True)
-        self.reconcile_local_to_remote()
-        self.reconcile_remote_to_local()
 
         self._observer = Observer()
         self._observer.schedule(_Handler(self), str(self.data_root), recursive=True)
@@ -131,6 +129,7 @@ class SyncEngine:
             ("debouncer", self._debounce_loop),
             ("poller", self._poll_loop),
             ("parse-poller", self._parse_poll_loop),
+            ("init", self._init_loop),
         ):
             t = threading.Thread(target=fn, name=f"sync-{name}", daemon=True)
             t.start()
@@ -157,6 +156,7 @@ class SyncEngine:
             "libraries": libraries,
             "observer_alive": bool(self._observer and self._observer.is_alive()),
             "recent_events": recent,
+            "initialized": self._initialized,
         }
 
     def enqueue_file(self, p: Path):
@@ -294,9 +294,50 @@ class SyncEngine:
                   error="RAGFlow produced 0 chunks (文件可能为纯扫描图片, 需手动 OCR)")
         self._record_event("parse_failed", rec.library, rec.path)
 
-    # ------------------------------------------------------------------
-    # actions
-    # ------------------------------------------------------------------
+    def _init_loop(self):
+        """后台线程：自适应等待 RAGFlow 就绪后完成首次 reconcile。
+
+        指数退避检测 list_datasets() 可达性。
+        就绪则立即 reconcile，不阻塞 FastAPI 启动。
+        poll_loop 独立持续兜底，初始化失败不崩溃。
+        """
+        if self._wait_for_ragflow(timeout=300):
+            self._refresh_lib_cache(force=True)
+            self.reconcile_local_to_remote()
+            self.reconcile_remote_to_local()
+            self._initialized = True
+            logger.info("sync engine fully initialised")
+        else:
+            logger.warning("sync engine started but RAGFlow unreachable; poll_loop will retry")
+        # 即使失败也标 initialized（不让 Panel 一直转圈）
+        self._initialized = True
+
+    def _wait_for_ragflow(self, timeout: int = 300) -> bool:
+        """指数退避检测 RAGFlow 可达性。
+
+        每轮调 list_datasets()，成功立即返回 True。
+        失败则按 3→4.5→6.8→...→60s 递增等待，最长 timeout 秒。
+        """
+        deadline = time.time() + timeout
+        interval = 3.0
+        while time.time() < deadline:
+            try:
+                self.ragflow.list_datasets()
+                elapsed = timeout - (deadline - time.time())
+                logger.info("RAGFlow ready after %.1fs", elapsed)
+                return True
+            except Exception:
+                remaining = max(0.0, deadline - time.time())
+                wait = min(interval, remaining)
+                if wait <= 0:
+                    break
+                logger.info("RAGFlow not ready, retry in %.1fs (%.0fs remaining)", wait, remaining)
+                if self._stop.wait(wait):
+                    return False  # 被 stop 中断
+                interval = min(interval * 1.5, 60.0)
+
+        logger.error("RAGFlow unreachable after %ds", timeout)
+        return False
     def _refresh_lib_cache(self, *, force: bool = False) -> dict[str, str]:
         with self._cache_lock:
             if not force and time.time() - self._lib_cache_at < 10:
