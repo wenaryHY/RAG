@@ -360,10 +360,38 @@
       </tbody>
     </table>
     <div x-show="reportDetail" class="mt-3 border-t pt-3">
-      <div class="text-xs text-slate-500 mb-1">
-        <span x-text="reportDetail?.report_id"></span> · <span x-text="reportDetail?.timestamp"></span>
+      <div class="text-xs text-slate-500 mb-2">
+        <span x-text="reportDetail?.report_id"></span> ·
+        <span x-text="reportDetail?.timestamp?.slice(0,19)?.replace('T',' ')"></span> ·
+        findings: <span x-text="(reportDetail?.findings||[]).length"></span>
       </div>
-      <pre class="text-xs scroll-y bg-slate-50 p-2 rounded" x-text="JSON.stringify(reportDetail,null,2)"></pre>
+      <template x-for="(f, idx) in (reportDetail?.findings||[])" :key="idx">
+        <div class="border rounded p-2 mb-2 text-xs">
+          <div class="flex items-center justify-between mb-1">
+            <div>
+              <span x-show="f.has_conflict" class="text-red-600 font-medium">conflict</span>
+              <span x-show="f.conflict_type"> · <span x-text="f.conflict_type"></span></span>
+              <span x-show="f.severity" class="ml-2 px-1 rounded"
+                :class="f.severity==='高'?'bg-red-100 text-red-700':'bg-yellow-100 text-yellow-700'"
+                x-text="f.severity"></span>
+              <span x-show="f.doc_a" class="ml-2 text-slate-400">doc: <span x-text="f.doc_a"></span></span>
+            </div>
+            <button x-show="f.has_conflict && f.chunk_id"
+              @click="applyFix(idx)" :disabled="fixLoading[idx]"
+              class="px-2 py-0.5 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white rounded text-xs"
+              x-text="fixLoading[idx]?'修复中...':'修复'"></button>
+          </div>
+          <div x-text="f.description" class="text-slate-600"></div>
+          <div x-show="f.recommendation" class="text-slate-500 mt-1">建议: <span x-text="f.recommendation"></span></div>
+          <div x-show="f.suggestion" class="mt-1 p-1 bg-green-50 border border-green-200 rounded text-slate-600">
+            修正建议: <span x-text="f.suggestion"></span>
+          </div>
+          <div x-show="fixResult && fixResultIdx===idx" class="mt-1"
+            :class="fixResult?.status==='applied'?'text-green-600':'text-red-600'"
+            x-text="fixResult?.detail"></div>
+        </div>
+      </template>
+      <div x-show="!(reportDetail?.findings||[]).length" class="text-slate-400 text-xs">0 findings</div>
     </div>
   </div>
 </section>
@@ -388,6 +416,11 @@
 
 </main>
 
+<div x-show="actionMsg" @click="actionMsg=''"
+  class="fixed bottom-4 right-4 px-3 py-2 rounded text-sm cursor-pointer z-50 shadow-lg"
+  :class="(actionMsg||'').startsWith('修正已应用')?'bg-green-600 text-white':'bg-red-600 text-white'"
+  x-text="actionMsg"></div>
+
 <script>
 function app(){return{
   tabs:[
@@ -406,6 +439,7 @@ function app(){return{
   uploadLib:'dev', uploadMsg:'', dragOver:false,
   actionMsg:'',
   sse:{connected:false,events:[],src:null},
+  fixLoading:{}, fixResult:null, fixResultIdx:-1,
 
   init(){
     this.refreshAll();
@@ -455,7 +489,22 @@ function app(){return{
     this.loadRuns(); this.loadReports();
   },
   async openReport(name){
-    try{this.reportDetail=await this.fetchJSON('/audit/reports/'+encodeURIComponent(name))}catch(e){this.reportDetail={error:String(e)}}
+    try{this.reportDetail=await this.fetchJSON('/audit/reports/'+encodeURIComponent(name));this.fixLoading={};this.fixResult=null;this.fixResultIdx=-1}catch(e){this.reportDetail={error:String(e)}}
+  },
+  async applyFix(idx){
+    const r=this.reportDetail; if(!r||!r.report_id)return;
+    const run=this.runs.find(run=>run.status==='completed'&&run.report_path&&run.report_path.endsWith(r.report_id+'.json'));
+    if(!run){this.actionMsg='找不到对应审计运行记录';return}
+    this.fixLoading={};this.fixLoading[idx]=true;
+    try{
+      this.fixResult=await this.fetchJSON('/audit/fix',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({run_id:run.id, finding_idx:idx, report_name:r.report_id+'.json'})
+      });
+      this.fixResultIdx=idx;
+      this.actionMsg=this.fixResult?.status==='applied'?'修正已应用':'修正: '+(this.fixResult?.detail||'failed');
+    }catch(e){this.actionMsg='修正请求失败: '+e}
+    this.fixLoading[idx]=false;
   },
   async viewDocs(d){
     this.docsOpen=d;
