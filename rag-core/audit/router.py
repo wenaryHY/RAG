@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from .client import call_claude, parse_json
+from . import fix
 from .funnel import run_funnel_audit
 from .prompts import render_conflict, render_error_check
 
@@ -232,3 +233,30 @@ async def mark_run_seen(run_id: int):
         run.seen = True
         s.add(run); s.commit()
     return {"status": "ok"}
+
+
+class FixRequest(BaseModel):
+    run_id: int
+    finding_idx: int
+    report_name: str  # e.g. "audit-funnel-20260518-020000.json"
+
+
+@router.post("/fix")
+async def apply_fix_endpoint(req: FixRequest, request: Request):
+    """对一条审计发现应用修正。"""
+    config = request.app.state.config
+    rag = request.app.state.ragflow
+    report_path = config.report_dir / req.report_name
+    result = await fix.apply_fix(config, rag, report_path, req.run_id, req.finding_idx)
+    return result
+
+
+@router.get("/fixes")
+async def list_fixes(run_id: Optional[int] = None, limit: int = 50):
+    """列出历史修正记录。"""
+    with db.session() as s:
+        stmt = select(db.AuditFix).order_by(db.AuditFix.applied_at.desc())  # type: ignore[attr-defined]
+        if run_id is not None:
+            stmt = stmt.where(db.AuditFix.run_id == run_id)
+        rows = s.exec(stmt.limit(limit)).all()
+    return {"fixes": [r.model_dump() for r in rows]}
