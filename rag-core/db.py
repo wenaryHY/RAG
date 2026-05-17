@@ -72,6 +72,23 @@ class AuditPairCache(SQLModel, table=True):
     judged_at: str = Field(default_factory=lambda: datetime.now().isoformat())
 
 
+class AuditFix(SQLModel, table=True):
+    __tablename__ = "audit_fixes"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    run_id: int
+    finding_idx: int
+    chunk_id: str
+    dataset_id: str
+    document_id: str
+    doc_name: str = ""
+    original_text: Optional[str] = None
+    fixed_text: str
+    suggestion: Optional[str] = None
+    applied_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+    status: str = "applied"   # applied | rejected
+
+
 _engine = None
 
 
