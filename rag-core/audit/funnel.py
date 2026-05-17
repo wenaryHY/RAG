@@ -340,6 +340,9 @@ async def run_funnel_audit(
                         "kind": "error_check",
                         "doc": c["doc"],
                         "errors": parsed.get("errors", []),
+                        "chunk_id": c.get("chunk_id"),
+                        "dataset_id": c.get("dataset_id"),
+                        "document_id": c.get("doc_id"),
                     })
             except Exception as e:
                 stats.errors.append({"stage": "error_check", "doc": c["doc"], "msg": str(e)[:200]})

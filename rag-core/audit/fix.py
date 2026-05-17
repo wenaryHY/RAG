@@ -30,7 +30,7 @@ async def apply_fix(
     run_id: int,
     finding_idx: int,
 ) -> dict:
-    """应用单条审计修正。
+    """应用单条审计修正，兼容 conflict 和 error_check 两种 finding。
 
     Returns:
         {"status": "applied"|"skipped"|"error", "detail": str}
@@ -40,7 +40,6 @@ async def apply_fix(
 
     xstx = config.keys["xstx"]
 
-    # 加载 finding
     if not report_path.exists():
         return {"status": "error", "detail": f"report not found: {report_path}"}
     report = json.loads(report_path.read_text(encoding="utf-8"))
@@ -49,20 +48,36 @@ async def apply_fix(
         return {"status": "error", "detail": f"finding_idx {finding_idx} out of range (0-{len(findings)-1})"}
 
     finding = findings[finding_idx]
+    is_error = finding.get("kind") == "error_check"
+    is_conflict = finding.get("has_conflict") == True
+
+    # ---- 确定目标文档和问题描述 ----
+    if is_conflict:
+        target_doc = finding.get("doc_a") or finding.get("doc_b") or ""
+        issue_desc = f"{finding.get('conflict_type','')}: {finding.get('description','')}"[:500]
+        recommendation = (finding.get("recommendation") or "")[:500]
+    elif is_error:
+        target_doc = finding.get("doc") or ""
+        errors = finding.get("errors", [])
+        issue_desc = "; ".join(
+            f"[{e.get('type','?')}] {e.get('description','')}" for e in errors
+        )[:500]
+        recommendation = ""
+    else:
+        return {"status": "skipped", "detail": "finding is neither conflict nor error_check"}
+
     suggestion = (finding.get("suggestion") or "").strip()
     fix_text = suggestion if suggestion else ""
 
     if not fix_text:
-        # 调 Opus 生成修正文本
         from .prompts import FIX_PROMPT
-        target_doc = finding.get("doc_a") or finding.get("doc_b") or ""
-        content = finding.get("description", "")
+        content = finding.get("description") or issue_desc
         prompt = (
             FIX_PROMPT
             .replace("<<SOURCE>>", target_doc)
             .replace("<<CONTENT>>", content[:3000])
-            .replace("<<ISSUE>>", f"{finding.get('conflict_type','')}: {finding.get('description','')}"[:500])
-            .replace("<<RECOMMENDATION>>", (finding.get("recommendation") or "")[:500])
+            .replace("<<ISSUE>>", issue_desc)
+            .replace("<<RECOMMENDATION>>", recommendation)
         )
         try:
             resp = await call_claude(xstx, [{"role": "user", "content": prompt}], timeout=180.0)
@@ -89,13 +104,11 @@ async def apply_fix(
     except Exception:
         pass
 
-    # PATCH chunk
     try:
         rag.update_chunk(str(dataset_id), str(document_id), str(chunk_id), fix_text)
     except Exception as e:
         return {"status": "error", "detail": f"RAGFlow PATCH chunk failed: {e}"}
 
-    # 写审计记录
     with db.session() as s:
         s.add(db.AuditFix(
             run_id=run_id,
@@ -103,7 +116,7 @@ async def apply_fix(
             chunk_id=str(chunk_id),
             dataset_id=str(dataset_id),
             document_id=str(document_id),
-            doc_name=finding.get("doc_a") or finding.get("doc_b") or "",
+            doc_name=target_doc,
             original_text=original_text,
             fixed_text=fix_text[:5000],
             suggestion=suggestion if suggestion else None,

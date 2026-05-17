@@ -364,9 +364,20 @@
         <span x-text="reportDetail?.report_id"></span> ·
         <span x-text="(reportDetail?.finished_at||reportDetail?.started_at||'').slice(0,19)?.replace('T',' ')"></span> ·
         findings: <span x-text="(reportDetail?.findings||[]).length"></span>
+        <button x-show="fixableCount()>0" @click="selectAll()" class="ml-2 text-blue-600 hover:underline" x-text="allSelected()?'取消全选':'全选'"></button>
+        <button x-show="selectedCount()>0" @click="fixSelected()" :disabled="fixBatchLoading"
+          class="ml-2 px-2 py-0.5 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white rounded text-xs"
+          x-text="fixBatchLoading?'修复中...':'修复选中 ('+selectedCount()+')'"></button>
+        <button x-show="fixableCount()>0" @click="fixAll()" :disabled="fixBatchLoading"
+          class="ml-1 px-2 py-0.5 bg-purple-600 hover:bg-purple-700 disabled:bg-slate-300 text-white rounded text-xs"
+          x-text="fixBatchLoading?'修复中...':'一键修复全部 ('+fixableCount()+')'"></button>
+        <span x-show="fixBatchMsg" class="ml-2" x-text="fixBatchMsg"></span>
       </div>
       <template x-for="(f, idx) in (reportDetail?.findings||[])" :key="idx">
         <div class="border rounded p-2 mb-2 text-xs">
+          <div class="flex items-start gap-2">
+            <input type="checkbox" :checked="selected[idx]" @change="toggleSelect(idx)" class="mt-1" x-show="f.chunk_id">
+            <div class="flex-1">
 
           <!-- error_check 类型 -->
           <div x-show="f.kind==='error_check'">
@@ -464,6 +475,7 @@ function app(){return{
   actionMsg:'',
   sse:{connected:false,events:[],src:null},
   fixLoading:{}, fixResult:null, fixResultIdx:-1,
+  selected:{}, fixBatchLoading:false, fixBatchMsg:'',
 
   init(){
     this.refreshAll();
@@ -513,7 +525,37 @@ function app(){return{
     this.loadRuns(); this.loadReports();
   },
   async openReport(name){
-    try{this.reportDetail=await this.fetchJSON('/audit/reports/'+encodeURIComponent(name));this.fixLoading={};this.fixResult=null;this.fixResultIdx=-1}catch(e){this.reportDetail={error:String(e)}}
+    try{this.reportDetail=await this.fetchJSON('/audit/reports/'+encodeURIComponent(name));this.fixLoading={};this.fixResult=null;this.fixResultIdx=-1;this.selected={};this.fixBatchMsg=''}catch(e){this.reportDetail={error:String(e)}}
+  },
+  fixableCount(){return (this.reportDetail?.findings||[]).filter(f=>f.chunk_id).length},
+  selectedCount(){return Object.values(this.selected).filter(v=>v).length},
+  allSelected(){const n=this.fixableCount();return n>0 && this.selectedCount()===n},
+  selectAll(){if(this.allSelected()){this.selected={}}else{(this.reportDetail?.findings||[]).forEach((f,i)=>{if(f.chunk_id)this.selected[i]=true})}},
+  toggleSelect(idx){this.selected[idx]=!this.selected[idx]},
+  async fixSelected(){
+    const idxs=Object.entries(this.selected).filter(([,v])=>v).map(([k])=>parseInt(k));
+    if(!idxs.length)return;
+    await this._doFixBatch(idxs);
+  },
+  async fixAll(){
+    const idxs=(this.reportDetail?.findings||[]).map((f,i)=>f.chunk_id?i:-1).filter(i=>i>=0);
+    if(!idxs.length)return;
+    await this._doFixBatch(idxs);
+  },
+  async _doFixBatch(indices){
+    const r=this.reportDetail; if(!r||!r.report_id)return;
+    const run=this.runs.find(run=>run.status==='completed'&&run.report_path&&run.report_path.endsWith(r.report_id+'.json'));
+    if(!run){this.fixBatchMsg='找不到对应审计运行记录';return}
+    this.fixBatchLoading=true;this.fixBatchMsg='';
+    try{
+      const resp=await this.fetchJSON('/audit/fix-batch',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({run_id:run.id, finding_indices:indices, report_name:r.report_id+'.json'})
+      });
+      this.fixBatchMsg=`完成: ${resp.applied}/${resp.total} applied`;
+      this.selected={};
+    }catch(e){this.fixBatchMsg='批量修复失败: '+e}
+    this.fixBatchLoading=false;
   },
   async applyFix(idx){
     const r=this.reportDetail; if(!r||!r.report_id)return;

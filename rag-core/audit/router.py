@@ -251,6 +251,26 @@ async def apply_fix_endpoint(req: FixRequest, request: Request):
     return result
 
 
+class FixBatchRequest(BaseModel):
+    run_id: int
+    finding_indices: list[int]
+    report_name: str
+
+
+@router.post("/fix-batch")
+async def apply_fix_batch(req: FixBatchRequest, request: Request):
+    """批量修正多条审计发现。"""
+    config = request.app.state.config
+    rag = request.app.state.ragflow
+    report_path = config.report_dir / req.report_name
+    results: list[dict] = []
+    for idx in req.finding_indices:
+        result = await fix.apply_fix(config, rag, report_path, req.run_id, idx)
+        result["finding_idx"] = idx
+        results.append(result)
+    return {"results": results, "applied": sum(1 for r in results if r.get("status") == "applied"), "total": len(results)}
+
+
 @router.get("/fixes")
 async def list_fixes(run_id: Optional[int] = None, limit: int = 50):
     """列出历史修正记录。"""
