@@ -71,16 +71,19 @@ class RAGFlowClient:
         chunk_token_num: int = 256,
         embedding_model: str = "BAAI/bge-m3@SILICONFLOW",
     ) -> dict:
+        # 注意：v0.25.4 OpenAPI 规范与实际行为不一致：
+        #   - 顶层不接受 language，会报 "Extra inputs are not permitted"
+        #   - parser_config.language 同样被拒
+        #   - 实测 RAGFlow 会基于文档内容自动识别语言
+        # language 参数保留接口兼容，但当前不传给后端。
         body = {
             "name": name,
             "description": description,
-            "language": language,
             "chunk_method": chunk_method,
             "embedding_model": embedding_model,
             "parser_config": {
                 "chunk_token_num": chunk_token_num,
                 "delimiter": "\n\n",
-                "language": language,
             },
         }
         data = self._request("POST", "/api/v1/datasets", json=body)

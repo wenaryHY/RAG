@@ -21,6 +21,9 @@ import config as cfg_mod
 import db
 from ragflow_client import RAGFlowClient
 from scheduler.router import router as scheduler_router
+from audit.router import router as audit_router
+from sync.router import router as sync_router
+from sync.engine import SyncEngine
 
 logger = logging.getLogger("rag-core")
 logging.basicConfig(
@@ -50,13 +53,24 @@ async def lifespan(app: FastAPI):
     )
     logger.info("ragflow client targeting %s", config.ragflow_base_url)
 
+    # sync engine
+    app.state.sync_engine = SyncEngine(config, app.state.ragflow)
+    app.state.sync_engine.start()
+    logger.info("sync engine started")
+
     yield
 
+    try:
+        app.state.sync_engine.stop()
+    except Exception:
+        pass
     app.state.ragflow.close()
 
 
 app = FastAPI(title="rag-core", version="0.1.0", lifespan=lifespan)
 app.include_router(scheduler_router)
+app.include_router(audit_router)
+app.include_router(sync_router)
 
 
 @app.get("/health")

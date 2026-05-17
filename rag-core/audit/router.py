@@ -1,0 +1,151 @@
+"""Audit FastAPI router."""
+from __future__ import annotations
+
+import json
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
+
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel
+
+from .client import call_claude, parse_json
+from .prompts import render_conflict, render_error_check
+
+router = APIRouter(prefix="/audit", tags=["audit"])
+
+
+class DocInput(BaseModel):
+    name: str
+    content: str
+    source: Optional[str] = None
+
+
+class AuditRequest(BaseModel):
+    documents: list[DocInput]
+    check_types: list[str] = ["conflict", "error"]
+
+
+class AuditResponse(BaseModel):
+    report_id: str
+    timestamp: str
+    conflicts: list[dict]
+    errors: list[dict]
+    summary: str
+    report_path: str
+
+
+@router.get("/health")
+async def health(request: Request):
+    config = request.app.state.config
+    report_dir: Path = config.report_dir
+    reports = sorted(report_dir.glob("*.json"), reverse=True) if report_dir.exists() else []
+    return {
+        "status": "ok",
+        "claude_model": "claude-opus-4-7",
+        "report_dir": str(report_dir),
+        "reports_count": len(reports),
+        "latest_report": reports[0].name if reports else None,
+        "xstx_configured": "xstx" in config.keys,
+    }
+
+
+@router.post("/run", response_model=AuditResponse)
+async def run_audit(req: AuditRequest, request: Request):
+    """阶段 1.C 基础版：全量两两比对。
+    阶段 4 改为 embedding→Flash→Opus 三级漏斗。
+    """
+    config = request.app.state.config
+    if "xstx" not in config.keys:
+        raise HTTPException(503, "xstx (Claude) key missing")
+    xstx = config.keys["xstx"]
+    report_dir: Path = config.report_dir
+    report_dir.mkdir(parents=True, exist_ok=True)
+    debug_path = str(report_dir / "_debug_last_response.txt")
+
+    docs = req.documents
+    conflicts: list[dict] = []
+    errors: list[dict] = []
+
+    if "conflict" in req.check_types:
+        for i in range(len(docs)):
+            for j in range(i + 1, len(docs)):
+                prompt = render_conflict(
+                    docs[i].name, docs[i].content, docs[j].name, docs[j].content
+                )
+                try:
+                    result = await call_claude(xstx, [{"role": "user", "content": prompt}])
+                    text = result["choices"][0]["message"]["content"]
+                    parsed = parse_json(text, debug_path=debug_path)
+                    if parsed.get("has_conflict"):
+                        parsed["doc_a"] = docs[i].name
+                        parsed["doc_b"] = docs[j].name
+                        conflicts.append(parsed)
+                except Exception as e:
+                    conflicts.append({
+                        "doc_a": docs[i].name,
+                        "doc_b": docs[j].name,
+                        "has_conflict": True,
+                        "conflict_type": "检测失败",
+                        "severity": "未知",
+                        "description": str(e)[:300],
+                    })
+
+    if "error" in req.check_types:
+        for d in docs:
+            prompt = render_error_check(d.name, d.content)
+            try:
+                result = await call_claude(xstx, [{"role": "user", "content": prompt}])
+                text = result["choices"][0]["message"]["content"]
+                parsed = parse_json(text, debug_path=debug_path)
+                if parsed.get("has_error"):
+                    errors.append({"source": d.name, "errors": parsed.get("errors", [])})
+            except Exception as e:
+                errors.append({
+                    "source": d.name,
+                    "errors": [{"type": "检测失败", "description": str(e)[:300], "severity": "未知"}],
+                })
+
+    high_c = sum(1 for c in conflicts if c.get("severity") == "高")
+    high_e = sum(1 for e in errors for err in e.get("errors", []) if err.get("severity") == "高")
+    summary = f"审计完成：{len(conflicts)}处冲突（{high_c}处高危），{len(errors)}个文档有误（{high_e}处高危）"
+
+    report_id = datetime.now().strftime("audit-%Y%m%d-%H%M%S")
+    ts = datetime.now().isoformat()
+    report = {
+        "report_id": report_id,
+        "timestamp": ts,
+        "conflicts": conflicts,
+        "errors": errors,
+        "summary": summary,
+    }
+    report_path = report_dir / f"{report_id}.json"
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    return AuditResponse(report_path=str(report_path), **report)
+
+
+@router.post("/single", response_model=AuditResponse)
+async def audit_single(doc: DocInput, request: Request):
+    return await run_audit(AuditRequest(documents=[doc], check_types=["error"]), request)
+
+
+@router.get("/reports")
+async def list_reports(request: Request, limit: int = 20):
+    report_dir: Path = request.app.state.config.report_dir
+    if not report_dir.exists():
+        return {"reports": []}
+    reports = sorted(report_dir.glob("audit-*.json"), reverse=True)[:limit]
+    return {"reports": [{"name": r.name, "size": r.stat().st_size} for r in reports]}
+
+
+@router.get("/reports/{name}")
+async def get_report(name: str, request: Request):
+    report_dir: Path = request.app.state.config.report_dir
+    fp = report_dir / name
+    if not fp.exists() or not fp.is_file():
+        raise HTTPException(404, "report not found")
+    try:
+        return json.loads(fp.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise HTTPException(500, f"failed to read report: {e}")
