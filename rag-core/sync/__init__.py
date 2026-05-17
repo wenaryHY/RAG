@@ -6,6 +6,5 @@
 - 30 秒轮询 RAGFlow 列表，反向同步：远端新建库 → 本地建文件夹
 - 去重：sha256 + state.sqlite.files
 - 完成后桌面通知（winotify）
-
-阶段 1.C：基础双向同步。AI 跨库关联、metadata 标注留 Phase 5。
+- 上传时注入 metadata（source_path / ingest_dir / filename_tokens / ingested_at / sha256）
 """

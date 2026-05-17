@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
@@ -251,6 +252,30 @@ class SyncEngine:
         name = p.name
         self._ensure_dataset(name)
 
+    def _metadata_for(self, p: Path, lib: str, sha: str) -> dict:
+        """为上传文件构造 metadata dict（PLAN §5.1）。"""
+        import re
+
+        ingested_at = datetime.now().isoformat()
+        try:
+            rel = p.relative_to(self.data_root)
+            ingest_dir = str(rel.parent).replace("\\", "/")
+        except ValueError:
+            ingest_dir = lib
+
+        stem = p.stem
+        tokens = [t for t in re.split(r"[\s\-_.,;:!@#$%^&()\[\]{}]+", stem) if t]
+        if tokens == [stem]:
+            tokens = [stem]
+
+        return {
+            "source_path": str(p),
+            "ingest_dir": ingest_dir,
+            "filename_tokens": tokens,
+            "ingested_at": ingested_at,
+            "sha256": sha,
+        }
+
     def _handle_file(self, p: Path):
         if not p.exists() or not p.is_file():
             return
@@ -269,6 +294,8 @@ class SyncEngine:
         if existing and existing.sha256 == sha and existing.status == "done":
             return  # 已处理过
 
+        meta = self._metadata_for(p, lib, sha)
+
         ds_id = self._ensure_dataset(lib)
         if not ds_id:
             st.upsert(
@@ -277,10 +304,17 @@ class SyncEngine:
             )
             return
 
-        st.upsert(str(p), sha256=sha, library=lib, dataset_id=ds_id, size=size, status="uploading")
+        st.upsert(
+            str(p), sha256=sha, library=lib, dataset_id=ds_id, size=size,
+            status="uploading",
+            source_path=meta["source_path"],
+            ingest_dir=meta["ingest_dir"],
+            filename_tokens=json.dumps(meta["filename_tokens"], ensure_ascii=False),
+            ingested_at=meta["ingested_at"],
+        )
 
         try:
-            up = self.ragflow.upload_document(ds_id, p)
+            up = self.ragflow.upload_document(ds_id, p, metadata=meta)
         except Exception as e:
             logger.exception("upload %s failed", p.name)
             st.upsert(str(p), status="error", error=str(e)[:300])

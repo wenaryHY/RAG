@@ -24,6 +24,10 @@ class FileRecord(SQLModel, table=True):
     size: Optional[int] = None
     uploaded_at: Optional[str] = None
     parsed_at: Optional[str] = None
+    source_path: Optional[str] = None
+    ingest_dir: Optional[str] = None
+    filename_tokens: Optional[str] = None
+    ingested_at: Optional[str] = None
     updated_at: str = Field(default_factory=lambda: datetime.now().isoformat())
 
 
@@ -39,6 +43,7 @@ class QueryLog(SQLModel, table=True):
     elapsed: Optional[float] = None
     pharmacy_mode: Optional[bool] = None
     cost_estimate: Optional[str] = None
+    filters_used: Optional[str] = None
 
 
 class AuditRun(SQLModel, table=True):

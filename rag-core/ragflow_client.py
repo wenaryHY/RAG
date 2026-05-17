@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, Optional
 
@@ -111,13 +112,16 @@ class RAGFlowClient:
                 return payload
         return []
 
-    def upload_document(self, dataset_id: str, file_path: Path) -> dict:
+    def upload_document(self, dataset_id: str, file_path: Path, metadata: Optional[dict] = None) -> dict:
         with file_path.open("rb") as f:
             files = {"file": (file_path.name, f, "application/octet-stream")}
+            data_kwargs: dict = {"files": files}
+            if metadata:
+                data_kwargs["data"] = {"meta_fields": json.dumps(metadata, ensure_ascii=False)}
             data = self._request(
                 "POST",
                 f"/api/v1/datasets/{dataset_id}/documents",
-                files=files,
+                **data_kwargs,
             )
         return data.get("data", data) if isinstance(data, dict) else data
 

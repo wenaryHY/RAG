@@ -1,6 +1,7 @@
 """Scheduler FastAPI router."""
 from __future__ import annotations
 
+import json
 import time
 from datetime import datetime
 from typing import Optional
@@ -21,6 +22,7 @@ class QueryRequest(BaseModel):
     pharmacy_mode: bool = False
     system_prompt: Optional[str] = None
     max_tokens: int = 2048
+    filters: Optional[dict] = None
 
 
 class QueryResponse(BaseModel):
@@ -86,6 +88,7 @@ async def query(req: QueryRequest, request: Request):
                 elapsed=elapsed,
                 pharmacy_mode=req.pharmacy_mode,
                 cost_estimate=target.cost_label,
+                filters_used=json.dumps(req.filters, ensure_ascii=False) if req.filters else None,
             )
         )
         s.commit()
