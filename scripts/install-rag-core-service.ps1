@@ -7,7 +7,13 @@
 
 $ErrorActionPreference = 'Stop'
 
-$NSSM      = 'D:\RAG\tools\nssm.exe'
+$NSSM      = if (Get-Command nssm -ErrorAction SilentlyContinue) {
+    (Get-Command nssm).Source
+} elseif (Test-Path 'D:\RAG\tools\nssm.exe') {
+    'D:\RAG\tools\nssm.exe'
+} else {
+    throw "nssm.exe not found (install: winget install NSSM.NSSM, then restart shell)"
+}
 $SVC_NAME  = 'rag-core'
 $PYTHON    = if (Get-Command python -ErrorAction SilentlyContinue) {
     & python -c "import sys; print(sys.executable)"
@@ -19,12 +25,9 @@ $ARGS      = '-B main.py'
 $LOG_OUT   = 'D:\RAG\logs\rag-core.out.log'
 $LOG_ERR   = 'D:\RAG\logs\rag-core.err.log'
 
-if (-not (Test-Path $NSSM)) { throw "nssm.exe not found at $NSSM" }
-
 # 管理员权限检查
-$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
-    [Security.Principal.WindowsBuiltInRole]::Administrator)
-if (-not $isAdmin) { throw "must run as Administrator" }
+net session 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "must run as Administrator (right-click -> Run with PowerShell)" }
 
 # 如果已有同名服务先删
 $svc = Get-Service $SVC_NAME -ErrorAction SilentlyContinue

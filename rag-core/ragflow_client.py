@@ -135,6 +135,13 @@ class RAGFlowClient:
             json={"document_ids": document_ids},
         )
 
+    def delete_documents(self, dataset_id: str, document_ids: list[str]) -> Any:
+        return self._request(
+            "DELETE",
+            f"/api/v1/datasets/{dataset_id}/documents",
+            json={"ids": document_ids},
+        )
+
     def get_document(self, dataset_id: str, document_id: str) -> dict:
         data = self._request(
             "GET",

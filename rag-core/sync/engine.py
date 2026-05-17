@@ -27,13 +27,15 @@ from ragflow_client import RAGFlowClient
 
 from . import state as st
 from .notify import toast
+from .ocr import needs_ocr, ocr_file
 
 logger = logging.getLogger("rag-core.sync")
 
 # 已索引扩展名（其他类型仍上传，但日志标注一下）
 SUPPORTED_EXT = {
     ".pdf", ".txt", ".md", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx",
-    ".html", ".htm", ".csv", ".json", ".rtf", ".epub", ".png", ".jpg", ".jpeg",
+    ".html", ".htm", ".csv", ".json", ".rtf", ".epub",
+    ".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif", ".webp",
 }
 
 
@@ -223,6 +225,7 @@ class SyncEngine:
         每 60s 查一次 status="parsing" 的文件，通过 RAGFlow API 获取
         真实 run_status，RUNNING→继续等，DONE→更新为 completed，
         FAIL/CANCEL→记录错误。
+        DONE + chunk_count=0 → 检测是否需 OCR 回退。
         """
         POLL_SEC = 60
         while not self._stop.is_set():
@@ -243,18 +246,52 @@ class SyncEngine:
                     logger.warning("parse poll: get_document %s failed: %s", rec.path, e)
                     continue
                 run_status = doc.get("run_status", "") if isinstance(doc, dict) else ""
+                chunk_count = doc.get("chunk_count", -1) if isinstance(doc, dict) else -1
+
                 if run_status == "DONE":
-                    st.upsert(
-                        rec.path, status="done",
-                        parsed_at=datetime.now().isoformat(), error=None,
-                    )
-                    self._record_event("parse_complete", rec.library, rec.path)
-                    toast("RAG: 解析完成", f"{rec.library} ← {Path(rec.path).name}")
+                    if chunk_count == 0 and rec.path:
+                        self._handle_zero_chunk(rec, doc)
+                    else:
+                        st.upsert(
+                            rec.path, status="done",
+                            parsed_at=datetime.now().isoformat(), error=None,
+                        )
+                        self._record_event("parse_complete", rec.library, rec.path)
+                        toast("RAG: 解析完成", f"{rec.library} ← {Path(rec.path).name}")
                 elif run_status in ("FAIL", "CANCEL"):
                     err_msg = doc.get("error", run_status) if isinstance(doc, dict) else run_status
-                    st.upsert(rec.path, status="error", error=str(err_msg)[:300])
-                    self._record_event("parse_failed", rec.library, rec.path)
-                    logger.warning("parse failed for %s: %s", rec.path, err_msg)
+                    self._handle_zero_chunk(rec, doc) if chunk_count == 0 else (
+                        st.upsert(rec.path, status="error", error=str(err_msg)[:300]),
+                        self._record_event("parse_failed", rec.library, rec.path),
+                        logger.warning("parse failed for %s: %s", rec.path, err_msg),
+                    )
+
+    def _handle_zero_chunk(self, rec, doc: dict):
+        """处理 RAGFlow 解析完成但 0 chunk 的文件。
+
+        尝试 OCR 回退（仅图片/EPUB），失败则标记 error。
+        """
+        p = Path(rec.path)
+        if not p.exists():
+            st.upsert(rec.path, status="error", error="original file missing")
+            return
+
+        if needs_ocr(p):
+            logger.info("parse poll: 0-chunk, trying OCR for %s", p.name)
+            ocr_txt = ocr_file(p)
+            if ocr_txt and ocr_txt.exists():
+                # 删掉 RAGFlow 中 0-chunk 的文档，改为上传 OCR 产物
+                try:
+                    self.ragflow.delete_documents(rec.dataset_id, [rec.ragflow_doc_id])
+                except Exception as e:
+                    logger.warning("failed to delete 0-chunk doc %s: %s", rec.ragflow_doc_id, e)
+                st.upsert(rec.path, status="error", error="RAGFlow produced 0 chunks")
+                self.enqueue_file(ocr_txt)
+                return
+
+        st.upsert(rec.path, status="error",
+                  error="RAGFlow produced 0 chunks (文件可能为纯扫描图片, 需手动 OCR)")
+        self._record_event("parse_failed", rec.library, rec.path)
 
     # ------------------------------------------------------------------
     # actions
@@ -342,6 +379,14 @@ class SyncEngine:
         if p.suffix.lower() not in SUPPORTED_EXT:
             logger.info("skip unsupported %s", p.name)
             return
+
+        # ---- OCR 预处理: 图片/扫描版 EPUB → .txt ----
+        ocr_txt: Optional[Path] = None
+        if needs_ocr(p):
+            ocr_txt = ocr_file(p)
+            if ocr_txt and ocr_txt.exists():
+                self.enqueue_file(ocr_txt)  # FileSync 自动拾取 .txt 上传
+        # ---- end OCR ----
 
         size = p.stat().st_size
         sha = st.sha256_of(p)

@@ -13,3 +13,9 @@ tomli==2.2.1; python_version < "3.11"
 # testing
 pytest==8.3.4
 pytest-asyncio==0.24.0
+
+# OCR (optional; 图片/扫描版 EPUB 预处理)
+pytesseract==0.3.13
+pillow>=10.0
+pdf2image==1.17.0
+# poppler: 手动装 https://github.com/oschwartz10612/poppler-windows/releases
