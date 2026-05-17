@@ -1,0 +1,11 @@
+# rag-core dependencies
+fastapi==0.136.1
+uvicorn[standard]==0.47.0
+httpx==0.28.1
+pydantic==2.13.4
+sqlmodel==0.0.30
+watchdog==6.0.0
+apscheduler==3.11.0
+tenacity==9.1.2
+winotify==1.1.0
+tomli==2.2.1; python_version < "3.11"

@@ -10,9 +10,10 @@ state_db   = "D:/RAG/state.sqlite"
 keys_file  = "D:/private/keys.ini"
 
 [ragflow]
-base_url = "http://127.0.0.1:9380"
-# RAGFlow 控制台 -> API Key 生成后填入
-api_key  = ""
+# base_url 与 api_key 由 keys.ini 提供，这里只放运行参数
+timeout_sec = 30
+upload_chunk_method = "naive"
+default_embedding_model = "BAAI/bge-m3@SILICONFLOW"
 
 [server]
 host = "127.0.0.1"
