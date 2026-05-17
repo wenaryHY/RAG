@@ -142,6 +142,15 @@ class RAGFlowClient:
             json={"ids": document_ids},
         )
 
+    def update_chunk(self, dataset_id: str, document_id: str, chunk_id: str, content: str) -> dict:
+        """PATCH 单个 chunk 的 content 字段。"""
+        data = self._request(
+            "PATCH",
+            f"/api/v1/datasets/{dataset_id}/documents/{document_id}/chunks/{chunk_id}",
+            json={"content": content},
+        )
+        return data.get("data", data) if isinstance(data, dict) else data
+
     def get_document(self, dataset_id: str, document_id: str) -> dict:
         data = self._request(
             "GET",
