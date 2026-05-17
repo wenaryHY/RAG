@@ -151,7 +151,7 @@ async def _stage3_opus(
 def _collect_chunks(
     rag: RAGFlowClient, dataset_id: str, *, max_per_doc: int = 30,
 ) -> list[dict]:
-    """返回 [{doc_name, chunk_id, text, sha}], 跨文档抽样后用于 embed。"""
+    """返回 [{doc, doc_id, dataset_id, chunk_id, text, sha}], 跨文档抽样后用于 embed。"""
     out: list[dict] = []
     docs = rag.list_documents(dataset_id, page=1, page_size=200)
     for d in docs:
@@ -169,7 +169,7 @@ def _collect_chunks(
             if not txt or len(txt) < 30:
                 continue
             out.append({
-                "doc": doc_name, "doc_id": doc_id,
+                "doc": doc_name, "doc_id": doc_id, "dataset_id": dataset_id,
                 "chunk_id": c.get("id"), "text": txt, "sha": _sha(txt),
             })
     return out
@@ -305,6 +305,9 @@ async def run_funnel_audit(
             finding = await _stage3_opus(a["text"], a["doc"], b["text"], b["doc"], xs_key, debug_path)
             stats.opus_calls += 1
             if finding:
+                finding["chunk_id"] = a.get("chunk_id")
+                finding["dataset_id"] = a.get("dataset_id")
+                finding["document_id"] = a.get("doc_id")
                 stats.findings.append(finding)
                 _cache_put(a["sha"], b["sha"], opus=json.dumps(finding, ensure_ascii=False))
             else:
