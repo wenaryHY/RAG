@@ -148,6 +148,8 @@ class TrayApp:
         def _run():
             result = freeze.freeze()
             toast("RAG 已冻结", result.get("status", "?"))
+            if self._icon:
+                self._icon.update_menu()
         threading.Thread(target=_run, name="tray-freeze", daemon=True).start()
 
     def _thaw(self, *_):
@@ -160,6 +162,8 @@ class TrayApp:
                 return
             toast("RAG 恢复中", result.get("status", "?"))
             self._refresh_now()
+            if self._icon:
+                self._icon.update_menu()
         threading.Thread(target=_run, name="tray-thaw", daemon=True).start()
 
     def _is_frozen(self) -> bool:
