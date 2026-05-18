@@ -21,6 +21,8 @@ from PIL import Image, ImageDraw
 import pystray
 from pystray import Menu, MenuItem
 
+import freeze
+
 CORE_BASE = "http://127.0.0.1:8840"
 PANEL_URL = CORE_BASE + "/"
 POLL_SEC = 15
@@ -49,6 +51,7 @@ def make_icon(color: str) -> Image.Image:
         "yellow": (234, 179, 8),
         "red":    (239, 68, 68),
         "gray":   (148, 163, 184),
+        "blue":   (59, 130, 246),
     }
     rgb = palette.get(color, palette["gray"])
     d.ellipse((6, 6, 58, 58), fill=rgb + (255,), outline=(15, 23, 42, 255), width=3)
@@ -70,6 +73,11 @@ class TrayApp:
 
     def _poll_loop(self):
         while not self._stop.is_set():
+            if freeze.is_frozen():
+                self._state["overall"] = "blue"
+                self._update_icon()
+                self._stop.wait(POLL_SEC)
+                continue
             try:
                 data = self.fetch_health()
                 self._state.update(data)
@@ -134,6 +142,29 @@ class TrayApp:
         self._stop.set()
         icon.stop()
 
+    def _freeze(self, *_):
+        self._state["overall"] = "blue"  # 立即设蓝，避免闪烁
+        self._update_icon()
+        def _run():
+            result = freeze.freeze()
+            toast("RAG 已冻结", result.get("status", "?"))
+        threading.Thread(target=_run, name="tray-freeze", daemon=True).start()
+
+    def _thaw(self, *_):
+        if not freeze.is_frozen():
+            toast("RAG", "当前未冻结")
+            return
+        def _run():
+            result = freeze.thaw()
+            if result.get("status") == "skipped":
+                return
+            toast("RAG 恢复中", result.get("status", "?"))
+            self._refresh_now()
+        threading.Thread(target=_run, name="tray-thaw", daemon=True).start()
+
+    def _is_frozen(self) -> bool:
+        return freeze.is_frozen()
+
     def _build_menu(self):
         return Menu(
             MenuItem("打开面板", self._open_panel, default=True),
@@ -141,17 +172,32 @@ class TrayApp:
             MenuItem("查看状态", self._show_status),
             MenuItem("立即刷新", self._refresh_now),
             Menu.SEPARATOR,
+            MenuItem(
+                "冻结后台 (释放资源)",
+                self._freeze,
+                enabled=lambda item: not freeze.is_frozen(),
+            ),
+            MenuItem(
+                "恢复后台",
+                self._thaw,
+                enabled=lambda item: freeze.is_frozen(),
+            ),
+            Menu.SEPARATOR,
             MenuItem("退出", self._quit),
         )
 
     # ------------------------------------------------------------------
     def run(self):
+        init_color = "blue" if freeze.is_frozen() else "gray"
+        init_title = "RAG: frozen" if freeze.is_frozen() else "RAG: starting"
         self._icon = pystray.Icon(
             "rag-tray",
-            icon=make_icon("gray"),
-            title="RAG: starting",
+            icon=make_icon(init_color),
+            title=init_title,
             menu=self._build_menu(),
         )
+        if freeze.is_frozen():
+            self._state["overall"] = "blue"
         t = threading.Thread(target=self._poll_loop, name="tray-poll", daemon=True)
         t.start()
         self._icon.run()
